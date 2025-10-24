@@ -7,7 +7,7 @@
     <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght=100..900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f0f3f6;
@@ -49,27 +49,16 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- Firebase Setup (Using global variables provided by the environment) ---
+        // --- Global Firebase State Variables (Initialized to null) ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 
-        let app;
-        let db;
-        let auth;
+        let app = null;
+        let db = null;
+        let auth = null;
         let userId = null; // Will remain null if Auth fails
         let tileDocId = 'user_tile_doc'; // Fixed document ID for the single user tile
         
-        // Initialize Firebase services immediately (non-blocking setup)
-        if (Object.keys(firebaseConfig).length > 0) {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            setLogLevel('Debug');
-        } else {
-            console.error("FATAL: Firebase configuration is missing.");
-        }
-        
-        // --- Global State ---
+        // --- Global App State ---
         const canvasContainer = document.getElementById('canvas-container');
         let localTileData = null; // Stores the single tile data retrieved from Firestore.
         const MAX_DRAG_SESSIONS = 6;
@@ -118,6 +107,8 @@
                     console.error("Error saving tile data:", error);
                 }
             } else {
+                 // Update local state if we aren't connected to Firebase
+                 localTileData = { ...localTileData, ...data };
                  console.warn("Save requested, but no valid userId/db connection. Data will be non-persistent.");
             }
         }
@@ -184,7 +175,7 @@
             }
         }
         
-        // --- Drag Handlers (omitted for brevity, no changes) ---
+        // --- Drag Handlers (no changes to logic) ---
         
         function handleDragStart(e) {
             if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
@@ -244,7 +235,7 @@
             }
 
             // Save to Firestore if connected, otherwise update local state only
-            if (userId) {
+            if (userId && db) { // Check if db is also initialized
                 saveTile({
                     movesMade: newMovesMade,
                     moveRestrictionEndTime: newRestrictionEndTime,
@@ -278,7 +269,7 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Rendering Functions ---
+        // --- Rendering Functions (no changes to logic) ---
 
         /**
          * Renders the single tile DOM element based on localTileData.
@@ -457,6 +448,12 @@
             const colorPicker = document.getElementById('color-picker');
             const userStatusText = document.getElementById('user-status-text');
 
+            // Update status text after UI render, in case auth finished quickly
+            if (!userId) {
+                userStatusText.textContent = 'Status: Waiting for Firebase to initialize...';
+            }
+
+
             const applyRing = (colorClass) => {
                 document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('ring-gray-900', 'ring-2'));
                 const currentSwatch = document.querySelector(`[data-color="${colorClass}"]`);
@@ -508,7 +505,7 @@
                 };
 
                 // Save to Firestore if authenticated, otherwise render locally
-                if (userId) {
+                if (userId && db) {
                     saveTile(newTileData);
                 } else {
                     // Fallback: local session only
@@ -536,6 +533,19 @@
 
             // 2. Render the interactive UI prompt immediately
             renderInputPrompt();
+            
+            // --- Synchronous Firebase Initialization (AFTER UI is rendered) ---
+            const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+            
+            if (Object.keys(firebaseConfig).length > 0) {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('Debug');
+            } else {
+                console.error("FATAL: Firebase configuration is missing.");
+            }
+            // --- End synchronous Firebase initialization ---
 
             // 3. Start the non-blocking authentication in the background
             if (db) {
