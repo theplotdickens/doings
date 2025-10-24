@@ -112,6 +112,7 @@
         // --- Global State ---
         const canvasContainer = document.getElementById('canvas-container');
         let localTileData = null; // Stores the single, non-persistent tile data locally.
+        const MAX_DRAG_SESSIONS = 6; // <-- NEW: Limit to 6 moves (drag sessions)
         
         const COLORS = {
             'Red': 'bg-red-500',
@@ -142,9 +143,12 @@
             return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
         }
         
-        // --- Drag Handlers (UNMODIFIED) ---
+        // --- Drag Handlers ---
 
         function handleDragStart(e) {
+            // Check if the move limit has been reached
+            if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS) return; 
+
             // Only start drag if it's the element itself
             if (e.target.id !== 'my-tile') return;
 
@@ -191,8 +195,34 @@
             localTileData.top = activeTileElement.style.top;
         }
 
+        /**
+         * NEW FUNCTION: Called when a drag session ends successfully.
+         * Increments the move counter and triggers a re-render.
+         */
+        function finalizeMove() {
+            if (!localTileData) return;
+            
+            // Check if limit is already reached
+            if (localTileData.movesMade >= MAX_DRAG_SESSIONS) return;
+
+            // Increment the move count
+            localTileData.movesMade += 1;
+            
+            // In the next step, this will be where we write to Firestore
+            console.log(`Move completed. Moves made: ${localTileData.movesMade}`);
+            
+            // Re-render to update the moves count display and check for restrictions
+            renderTile(); 
+        }
+
         function handleDragEnd() {
             if (!isDragging) return;
+            
+            // Only finalize move if we had an active tile element (i.e., a drag session occurred)
+            if (activeTileElement) {
+                finalizeMove();
+            }
+            
             isDragging = false;
             activeTileElement = null; 
         }
@@ -228,11 +258,13 @@
                 tileElement.id = domId;
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
-                
-                // Attach listeners
-                tileElement.onmousedown = handleDragStart;
-                tileElement.ontouchstart = handleDragStart;
             }
+            
+            // --- MOVES LEFT LOGIC ---
+            const movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
+            const isRestricted = movesLeft <= 0;
+            // --- END MOVES LEFT LOGIC ---
+
 
             // Apply styling classes
             const colorClass = tileData.color;
@@ -253,12 +285,30 @@
                     <p class="text-sm italic font-normal ${textColor} opacity-80 mt-2 select-none pointer-events-none">
                         Created: ${tileData.createdAt}
                     </p>
-                    <p class="text-xs font-mono text-center mt-2 ${textColor} opacity-60 pointer-events-none">
+                    <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100 pointer-events-none">
+                        ${isRestricted ? 'MOVES EXHAUSTED' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`}
+                    </p>
+                    <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none">
                         ID: ${window.currentUserId.substring(0, 8) + '...'}
                     </p>
                 </div>
             `;
             
+            // Apply state-based class changes (disable visual if needed)
+            if (isRestricted) {
+                // Disable drag handlers and add visual cues
+                tileElement.onmousedown = null;
+                tileElement.ontouchstart = null;
+                tileElement.style.cursor = 'default';
+                tileElement.classList.add('grayscale', 'opacity-75', 'cursor-not-allowed');
+            } else {
+                // Ensure handlers are active if moves remain
+                tileElement.onmousedown = handleDragStart;
+                tileElement.ontouchstart = handleDragStart;
+                tileElement.style.cursor = 'grab';
+                tileElement.classList.remove('grayscale', 'opacity-75', 'cursor-not-allowed');
+            }
+
             // Apply position
             tileElement.style.left = tileData.left; 
             tileElement.style.top = tileData.top; 
@@ -367,8 +417,8 @@
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
-                    // Now includes the authenticated ID
-                    userId: window.currentUserId 
+                    userId: window.currentUserId, 
+                    movesMade: 0, // <-- Initialized move counter
                 };
 
                 // Render the tile and hide the prompt
