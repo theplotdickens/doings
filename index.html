@@ -31,12 +31,80 @@
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); /* Larger shadow when grabbing */
         }
+        /* Style for the User ID display */
+        #user-id-display {
+            font-weight: bold;
+            color: #1f2937; /* Gray-800 */
+        }
     </style>
 </head>
 <body>
     
+    <!-- Firebase Initialization Script (Module Scope) -->
+    <script type="module">
+        // Using stable CDN version 11.6.1 for Canvas compatibility
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Set Firebase Log Level to Debug for development/debugging
+        setLogLevel('Debug');
+
+        // 1. Retrieve Environment Variables (MANDATORY in Canvas)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // 2. Initialize Firebase Services
+        const app = initializeApp(firebaseConfig);
+        window.db = getFirestore(app); // Firestore service (for later)
+        window.auth = getAuth(app);     // Auth service
+        window.currentUserId = null;    // Placeholder for authenticated UID
+
+        // Expose other required functions globally for the main script block
+        window.getFirestore = getFirestore;
+        window.TILE_COLLECTION_PATH = `/artifacts/${appId}/public/data/tiles`;
+
+
+        // 3. Handle Authentication Flow (CRITICAL STEP 1)
+        onAuthStateChanged(window.auth, async (user) => {
+            if (user) {
+                // If user object exists (already authenticated or token sign-in successful)
+                window.currentUserId = user.uid;
+            } else {
+                // If not authenticated, attempt custom token or anonymous sign-in
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(window.auth, initialAuthToken);
+                        window.currentUserId = window.auth.currentUser.uid;
+                    } else {
+                        await signInAnonymously(window.auth);
+                        window.currentUserId = window.auth.currentUser.uid;
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error: Falling back to random ID.", error);
+                    // Fallback to a random ID if authentication fails completely
+                    window.currentUserId = crypto.randomUUID(); 
+                }
+            }
+            
+            // Display User ID immediately
+            const userIdDisplay = document.getElementById('user-id-display');
+            if (userIdDisplay) {
+                userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
+            }
+
+            // Start the main application logic only after authentication is complete
+            window.initializeApp();
+        });
+    </script>
+    
     <!-- Main container for the draggable element -->
     <section id="canvas-container" class="absolute inset-0 w-full h-full">
+        <!-- User ID Display (Now shows the authenticated ID) -->
+        <div class="absolute top-2 left-2 p-2 bg-white rounded-lg shadow-md text-sm text-gray-600 z-50">
+            Authenticated User ID: <span id="user-id-display">Signing In...</span>
+        </div>
         <!-- Tile or Input Prompt Renders here -->
     </section>
 
@@ -74,7 +142,7 @@
             return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
         }
         
-        // --- Drag Handlers ---
+        // --- Drag Handlers (UNMODIFIED) ---
 
         function handleDragStart(e) {
             // Only start drag if it's the element itself
@@ -185,6 +253,9 @@
                     <p class="text-sm italic font-normal ${textColor} opacity-80 mt-2 select-none pointer-events-none">
                         Created: ${tileData.createdAt}
                     </p>
+                    <p class="text-xs font-mono text-center mt-2 ${textColor} opacity-60 pointer-events-none">
+                        ID: ${window.currentUserId.substring(0, 8) + '...'}
+                    </p>
                 </div>
             `;
             
@@ -277,7 +348,7 @@
 
             const createNewTile = () => {
                 const name = input.value.trim();
-                if (!name || name.length === 0) return;
+                if (!name || name.length === 0 || !window.currentUserId) return;
 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
                     year: 'numeric', 
@@ -295,7 +366,9 @@
                     color: selectedColor,
                     left: initialLeft,
                     top: initialTop,
-                    createdAt: creationDate 
+                    createdAt: creationDate,
+                    // Now includes the authenticated ID
+                    userId: window.currentUserId 
                 };
 
                 // Render the tile and hide the prompt
@@ -313,16 +386,13 @@
         }
 
         /**
-         * Initialization function
+         * Initializes the application state, called after Firebase Auth is complete.
          */
-        function initializeApp() {
+        window.initializeApp = function() {
             renderInputPrompt();
-        }
+        };
 
-        // Initialize on load
-        window.onload = initializeApp;
-        
-        // Re-render on resize to maintain correct drag behavior (not strictly necessary but good practice)
+        // Re-render on resize to maintain correct drag behavior
         window.addEventListener('resize', renderTile); 
     </script>
 </body>
