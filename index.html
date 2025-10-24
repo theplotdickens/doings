@@ -42,6 +42,12 @@
             align-items: center;
             z-index: 30;
         }
+        /* Custom ring class for selected color */
+        .color-selected {
+            outline: 4px solid white; /* Ensures visibility on dark colors */
+            outline-offset: 2px;
+            box-shadow: 0 0 0 2px black;
+        }
     </style>
 </head>
 <body>
@@ -51,7 +57,8 @@
 
     <!-- INPUT PROMPT MODAL: Made visible by default to ensure it loads instantly. -->
     <div id="input-prompt-modal" class="prompt-modal-overlay">
-        <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all">
+        <!-- Added pointer-events-auto for robustness -->
+        <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
                 <!-- Status text for Firebase initialization -->
@@ -169,7 +176,8 @@
         
         function showInputPrompt() {
              promptModal.classList.remove('hidden');
-             document.getElementById('name-input')?.focus();
+             // Attempt to focus the input to help mobile users
+             document.getElementById('name-input')?.focus(); 
         }
 
         // --- Data Listener and Auth Setup ---
@@ -483,59 +491,61 @@
 
         // --- Event Binding for the Static Prompt Modal ---
         function setupPromptHandlers() {
-            // Render the color swatches first
             const colorPicker = document.getElementById('color-picker');
-            const colorSwatches = Object.entries(COLORS).map(([name, colorClass]) => `
-                <button type="button" data-color="${colorClass}" 
-                    class="color-swatch w-7 h-7 rounded-full shadow-md hover:ring-4 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out" 
-                    title="${name}"
-                ></button>
-            `).join('');
-            colorPicker.innerHTML = colorSwatches;
-
             const input = document.getElementById('name-input');
             const button = document.getElementById('submit-button');
             
             // Helper to apply the ring indicator
             const applyRing = (colorClass) => {
-                document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('ring-gray-900', 'ring-2'));
+                document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('color-selected'));
                 const currentSwatch = document.querySelector(`[data-color="${colorClass}"]`);
                 if (currentSwatch) {
-                    currentSwatch.classList.add('ring-gray-900', 'ring-2');
+                    currentSwatch.classList.add('color-selected');
                 }
             };
             
             applyRing(selectedColor);
 
-            // Color Picker Listener: Using mouseup/touchend for reliability
-            colorPicker.addEventListener('mouseup', (e) => {
-                const swatch = e.target.closest('.color-swatch');
-                if (swatch) {
-                    selectedColor = swatch.dataset.color;
+            // 1. Render and attach direct event listeners to swatches
+            Object.entries(COLORS).forEach(([name, colorClass]) => {
+                const swatch = document.createElement('button');
+                swatch.type = 'button';
+                swatch.dataset.color = colorClass;
+                swatch.title = name;
+                swatch.className = `color-swatch w-7 h-7 rounded-full shadow-md hover:ring-4 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
+                
+                // Direct Click Listener
+                swatch.addEventListener('click', (e) => {
+                    selectedColor = colorClass;
                     applyRing(selectedColor);
-                }
-            });
-            colorPicker.addEventListener('touchend', (e) => {
-                const swatch = e.target.closest('.color-swatch');
-                if (swatch) {
-                    selectedColor = swatch.dataset.color;
+                });
+                // Direct Touchend Listener for touch devices
+                swatch.addEventListener('touchend', (e) => {
+                    e.preventDefault(); // Stop potential phantom mouse events
+                    selectedColor = colorClass;
                     applyRing(selectedColor);
-                    e.preventDefault(); // Prevents double click/tap
-                }
-            });
+                });
 
-
-            // Input Validation Listener: Use keyup for instant responsiveness
-            input.addEventListener('keyup', () => { 
-                const name = input.value.trim();
-                button.disabled = name.length === 0; 
+                colorPicker.appendChild(swatch);
             });
             
+            // Re-apply ring after creating all swatches
+            applyRing(selectedColor);
+
+
+            // 2. Input Validation Listener: Use keyup for instant responsiveness
+            const checkInput = () => {
+                const name = input.value.trim();
+                button.disabled = name.length === 0;
+            };
+            
+            input.addEventListener('keyup', checkInput); 
+            
             // Initial check to set the correct disabled state immediately
-            button.disabled = input.value.trim().length === 0;
+            checkInput();
 
 
-            // Creation Logic
+            // 3. Creation Logic
             const createNewTile = () => {
                 const name = input.value.trim();
                 if (!name || name.length === 0) return;
@@ -570,7 +580,12 @@
                 saveTile(newTileData);
             };
 
+            // Direct Click and Touchend listeners for the submit button
             button.addEventListener('click', createNewTile);
+            button.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                createNewTile();
+            });
             
             input.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter' && !button.disabled) {
