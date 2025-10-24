@@ -7,7 +7,7 @@
     <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght=100..900&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f0f3f6;
@@ -46,7 +46,6 @@
     <script type="module">
         // --- Firebase Imports ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // Removed setPersistence, browserLocalPersistence
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -57,26 +56,24 @@
         let app;
         let db;
         let auth;
-        let userId = null;
+        let userId = null; // Will remain null if Auth fails
         let tileDocId = 'user_tile_doc'; // Fixed document ID for the single user tile
-        let authFinishedAttempt = false; // NEW FLAG: Ensures only one resolver handles the UI transition
         
-        // Initialize Firebase
+        // Initialize Firebase services immediately (non-blocking setup)
         if (Object.keys(firebaseConfig).length > 0) {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
-            setLogLevel('Debug'); // Enable debug logging for Firebase issues
+            setLogLevel('Debug');
         } else {
-            console.error("FATAL: Firebase configuration is missing. Persistence disabled.");
-            document.getElementById('loading-state').textContent = "Error: Missing Firebase Config.";
+            console.error("FATAL: Firebase configuration is missing.");
         }
         
         // --- Global State ---
         const canvasContainer = document.getElementById('canvas-container');
         let localTileData = null; // Stores the single tile data retrieved from Firestore.
-        const MAX_DRAG_SESSIONS = 6; // Limit to 6 moves
-        const COOLDOWN_DURATION_MS = 60000; // 1 minute cooldown
+        const MAX_DRAG_SESSIONS = 6;
+        const COOLDOWN_DURATION_MS = 60000;
         let cooldownIntervalId = null; 
         
         const COLORS = {
@@ -97,8 +94,8 @@
         let offsetX = 0;
         let offsetY = 0;
         
-        const TILE_SIZE_SM = 192; // w-48
-        const TILE_SIZE_LG = 224; // sm:w-56 
+        const TILE_SIZE_SM = 192; 
+        const TILE_SIZE_LG = 224; 
 
         // --- Utility Functions ---
 
@@ -116,11 +113,12 @@
             const tileRef = getTileDocRef();
             if (tileRef) {
                 try {
-                    // Use setDoc with merge to only update fields present in 'data'
                     await setDoc(tileRef, data, { merge: true });
                 } catch (error) {
                     console.error("Error saving tile data:", error);
                 }
+            } else {
+                 console.warn("Save requested, but no valid userId/db connection. Data will be non-persistent.");
             }
         }
         
@@ -136,9 +134,11 @@
                         localTileData = docSnap.data();
                         renderTile();
                     } else {
-                        // Tile does not exist, show creation prompt
+                        // Tile does not exist, show creation prompt (if not already showing)
                         localTileData = null;
-                        renderInputPrompt();
+                        if (!document.getElementById('input-prompt')) {
+                             renderInputPrompt();
+                        }
                     }
                 }, (error) => {
                     console.error("Error listening to tile data:", error);
@@ -146,47 +146,31 @@
             }
         }
         
-        // NEW: Centralized function to transition the UI out of the loading state
-        function finishLoading(authSuccess) {
-            if (authFinishedAttempt) return; // Already resolved, do nothing
-            authFinishedAttempt = true;
-
-            const loadingState = document.getElementById('loading-state');
-            if (loadingState) loadingState.remove();
-
-            if (!authSuccess) {
-                // Auth failed or timed out. Fallback to anonymous state.
-                userId = null;
-                localTileData = null;
-                renderInputPrompt();
-            }
-            // If authSuccess is true, the onAuthStateChanged handler already called startDataListener.
-        }
-
+        /**
+         * Starts non-blocking authentication in the background.
+         * Only updates userId and starts listener if successful, does not block UI render.
+         */
         async function setupAuthAndData() {
-            
-            // 1. Set up the guaranteed UI resolver (timeout)
-            // If onAuthStateChanged hasn't fired in 2s, force the app to be usable.
-            const timeoutId = setTimeout(() => {
-                console.warn("Auth timeout reached (2s). Forcing UI render fallback.");
-                finishLoading(false); 
-            }, 2000);
+            if (!auth || !db) return; // Skip if Firebase init failed
 
-            // 2. Start the authentication listener
+            // Set up the listener first. This will capture the sign-in result.
             onAuthStateChanged(auth, (user) => {
-                clearTimeout(timeoutId); // Cancel the timeout if auth resolves first
-                
                 if (user) {
+                    // Auth was successful! Update state and start listening to persistent data.
                     userId = user.uid;
-                    startDataListener(); // Start data fetching
-                    finishLoading(true); // Signal success
+                    startDataListener(); 
+                    // Re-render the prompt/tile to update the userId displayed
+                    if(document.getElementById('input-prompt')) renderInputPrompt();
+                    else if (localTileData) renderTile();
+                    
                 } else {
-                    // User is signed out/anonymous failed, but auth listener finished its job
-                    finishLoading(false); // Signal failure, which leads to renderInputPrompt()
+                    // Auth resolved but user is signed out or anonymous sign-in failed.
+                    userId = null; 
+                    // If the user was previously authenticated but signed out, this will trigger the Firestore listener to stop.
                 }
             });
             
-            // 3. Attempt sign-in (non-blocking)
+            // Attempt sign-in (non-blocking)
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token.length > 0) {
                     signInWithCustomToken(auth, __initial_auth_token)
@@ -196,17 +180,13 @@
                         .catch(error => console.error("Anonymous Sign-in Failed (non-blocking):", error));
                 }
             } catch (error) {
-                // If a sync error occurred during the setup call itself, immediately trigger the fallback
                 console.error("Firebase Sign-in Attempt Error (sync):", error);
-                clearTimeout(timeoutId);
-                finishLoading(false);
             }
         }
         
-        // --- Drag Handlers (No changes here, they look fine) ---
-
+        // --- Drag Handlers (omitted for brevity, no changes) ---
+        
         function handleDragStart(e) {
-            // Only start drag if not restricted
             if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
                 return;
             }
@@ -245,47 +225,45 @@
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
             // --- END BOUNDARY LOGIC ---
 
-            // Apply the constrained position
             activeTileElement.style.left = `${newLeft}px`;
             activeTileElement.style.top = `${newTop}px`;
         }
 
-        /**
-         * Called when a drag session ends successfully.
-         */
         function finalizeMove() {
             if (!localTileData) return;
             
-            // Check if limit is already reached and cooldown is active
             if (localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
                 return;
             }
             
-            // 1. Increment move count
             const newMovesMade = localTileData.movesMade + 1;
             let newRestrictionEndTime = localTileData.moveRestrictionEndTime;
             
-            // 2. If this move *hits* the limit, set the cooldown time
             if (newMovesMade >= MAX_DRAG_SESSIONS) {
                 newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
             }
 
-            // 3. Update Firestore with new state
-            saveTile({
-                movesMade: newMovesMade,
-                moveRestrictionEndTime: newRestrictionEndTime,
-                left: activeTileElement.style.left,
-                top: activeTileElement.style.top,
-            });
-            
-            // Note: renderTile() will be called automatically by the onSnapshot listener once the data is saved
+            // Save to Firestore if connected, otherwise update local state only
+            if (userId) {
+                saveTile({
+                    movesMade: newMovesMade,
+                    moveRestrictionEndTime: newRestrictionEndTime,
+                    left: activeTileElement.style.left,
+                    top: activeTileElement.style.top,
+                });
+            } else {
+                localTileData.movesMade = newMovesMade;
+                localTileData.moveRestrictionEndTime = newRestrictionEndTime;
+                localTileData.left = activeTileElement.style.left;
+                localTileData.top = activeTileElement.style.top;
+                renderTile(); // Force a manual re-render if not using Firestore snapshot
+            }
         }
 
         function handleDragEnd() {
             if (!isDragging) return;
             
             if (activeTileElement) {
-                // Save the finalized position and increment the move counter
                 finalizeMove();
             }
             
@@ -293,12 +271,12 @@
             activeTileElement = null; 
         }
 
-        // Attach global document listeners for drag movement/end 
         document.addEventListener('mousemove', handleDragMove);
         document.addEventListener('mouseup', handleDragEnd);
         document.addEventListener('touchmove', handleDragMove, { passive: false }); 
         document.addEventListener('touchend', handleDragEnd);
         document.addEventListener('touchcancel', handleDragEnd);
+
 
         // --- Rendering Functions ---
 
@@ -306,13 +284,11 @@
          * Renders the single tile DOM element based on localTileData.
          */
         function renderTile() {
-            // 1. Clear previous interval (always do this first in render)
             if (cooldownIntervalId) {
                 clearInterval(cooldownIntervalId);
                 cooldownIntervalId = null;
             }
 
-            // Remove prompt if it exists
             const inputPrompt = document.getElementById('input-prompt');
             if(inputPrompt) {
                 inputPrompt.remove();
@@ -331,33 +307,22 @@
                 tileElement.id = domId;
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
-                // Ensure the canvas is not in the centered-input-view class
                 canvasContainer.classList.remove('centered-input-view');
             }
             
             // --- MOVES LEFT & COOLDOWN LOGIC ---
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
-            
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
-            // Check for and handle cooldown expiration
             if (isCooldownExpired) {
-                // Only save the reset if it hasn't been saved yet (i.e., moveRestrictionEndTime > 0)
-                if (tileData.moveRestrictionEndTime > 0) {
-                    saveTile({
-                        movesMade: 0,
-                        moveRestrictionEndTime: 0 
-                    });
+                if (tileData.moveRestrictionEndTime > 0 && userId) { // Only attempt reset save if connected
+                    saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
                 }
-                movesLeft = MAX_DRAG_SESSIONS; // Update display variable
+                movesLeft = MAX_DRAG_SESSIONS;
             }
             
-            // Determine current restriction status based on current state
             const isRestricted = tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
-
-            let movesDisplayText = isRestricted 
-                ? 'COOLDOWN: initializing...' 
-                : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
+            let movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
             // --- END MOVES LEFT & COOLDOWN LOGIC ---
 
             // Apply styling
@@ -380,7 +345,7 @@
                         ${movesDisplayText}
                     </p>
                     <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none break-all text-ellipsis overflow-hidden">
-                        USER ID: ${userId ? userId : 'N/A'}
+                        ${userId ? 'USER ID: ' + userId : 'NON-PERSISTENT SESSION'}
                     </p>
                 </div>
             `;
@@ -395,7 +360,6 @@
 
                     if (timeRemaining <= 0) {
                         clearInterval(cooldownIntervalId);
-                        // Trigger renderTile to reset state via saveTile call
                         renderTile(); 
                         return;
                     }
@@ -436,19 +400,16 @@
          * Renders the name and color input prompt screen.
          */
         function renderInputPrompt() {
-            // 1. Ensure the canvas is ready for the prompt
             if (document.getElementById('my-tile')) {
                 document.getElementById('my-tile').remove();
             }
             canvasContainer.innerHTML = '';
             canvasContainer.className = 'w-full centered-input-view';
             
-            // 2. Build the prompt UI
             const promptDiv = document.createElement('div');
             promptDiv.id = 'input-prompt';
             promptDiv.className = 'w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl';
 
-            // Generate color swatch HTML
             const colorSwatches = Object.entries(COLORS).map(([name, colorClass]) => `
                 <button type="button" data-color="${colorClass}" 
                     class="color-swatch w-7 h-7 rounded-full shadow-md hover:ring-4 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out" 
@@ -459,7 +420,9 @@
             promptDiv.innerHTML = `
                 <div class="space-y-4">
                     <p class="text-xl font-bold text-gray-800 text-center">Create Your Tile</p>
-                    <p class="text-xs text-center text-gray-500 break-all text-ellipsis overflow-hidden">USER ID: ${userId ? userId : 'Anonymous (No Persistence)'}</p>
+                    <p class="text-xs text-center text-gray-500 break-all text-ellipsis overflow-hidden" id="user-status-text">
+                        ${userId ? 'USER ID: ' + userId : 'Status: Trying to connect for persistence...'}
+                    </p>
 
                     <input
                         type="text"
@@ -492,6 +455,7 @@
             const input = document.getElementById('name-input');
             const button = document.getElementById('submit-button');
             const colorPicker = document.getElementById('color-picker');
+            const userStatusText = document.getElementById('user-status-text');
 
             const applyRing = (colorClass) => {
                 document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('ring-gray-900', 'ring-2'));
@@ -513,10 +477,9 @@
 
             input.addEventListener('input', () => {
                 const name = input.value.trim();
-                // Disable only if name is empty. If userId is null, it creates a non-persistent tile.
                 button.disabled = name.length === 0; 
             });
-            input.dispatchEvent(new Event('input')); // Initial check
+            input.dispatchEvent(new Event('input')); 
 
 
             const createNewTile = () => {
@@ -529,7 +492,6 @@
                     day: 'numeric' 
                 });
                 
-                // Calculate Initial Centered Pixel Position
                 const size = getCurrentTileSize();
                 const initialLeft = `${(window.innerWidth / 2) - (size / 2)}px`;
                 const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
@@ -549,7 +511,7 @@
                 if (userId) {
                     saveTile(newTileData);
                 } else {
-                    // Fallback for non-persistent local rendering if auth fails
+                    // Fallback: local session only
                     localTileData = newTileData;
                     renderTile();
                 }
@@ -564,18 +526,29 @@
             });
             input.focus();
         }
+        
+        // --- Execution Flow: Guaranteed Instant Render ---
+        
+        window.onload = function () {
+            // 1. Immediately remove the blocking loading screen
+            const loadingState = document.getElementById('loading-state');
+            if (loadingState) loadingState.remove();
 
-        // Start the application by setting up Firebase Auth
-        if (db) {
-            setupAuthAndData();
-        } else {
-             // If config failed, display the prompt without persistence
-             document.getElementById('loading-state').remove();
-             renderInputPrompt();
-        }
+            // 2. Render the interactive UI prompt immediately
+            renderInputPrompt();
 
-        // Re-render on resize to maintain correct drag behavior
-        window.addEventListener('resize', renderTile); 
+            // 3. Start the non-blocking authentication in the background
+            if (db) {
+                setupAuthAndData();
+            } else {
+                const statusText = document.getElementById('user-status-text');
+                if (statusText) statusText.textContent = "Status: Firebase connection failed.";
+            }
+
+            // 4. Ensure responsiveness
+            window.addEventListener('resize', renderTile); 
+        };
+        
     </script>
 </body>
 </html>
