@@ -31,101 +31,16 @@
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); /* Larger shadow when grabbing */
         }
-        /* Style for the User ID display */
-        #user-id-display {
-            font-weight: bold;
-            color: #1f2937; /* Gray-800 */
-        }
+        /* Style for the User ID display (now removed from HTML) */
     </style>
 </head>
 <body>
     
-    <!-- Firebase Initialization Script (Module Scope) -->
-    <script type="module">
-        // Using stable CDN version 11.6.1 for Canvas compatibility
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Set Firebase Log Level to Debug for development/debugging
-        setLogLevel('Debug');
-
-        // 1. Retrieve Environment Variables (MANDATORY in Canvas)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        // FIX: Corrected typo from __initialAuthToken to __initial_auth_token
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        // 2. Initialize Firebase Services
-        const app = initializeApp(firebaseConfig);
-        window.db = getFirestore(app); // Firestore service (for later)
-        window.auth = getAuth(app);     // Auth service
-        window.currentUserId = null;    // Placeholder for authenticated UID
-
-        // Expose other required functions globally for the main script block
-        window.getFirestore = getFirestore;
-        window.TILE_COLLECTION_PATH = `/artifacts/${appId}/public/data/tiles`;
-
-        // Flag to ensure the application only initializes once
-        let isAppInitialized = false; 
-
-        // 3. Handle Authentication Flow (CRITICAL STEP 1 - Refactored for stability)
-        onAuthStateChanged(window.auth, async (user) => {
-            if (isAppInitialized) return; 
-
-            if (user) {
-                // CASE 1: User is successfully authenticated (first time, or after sign-in attempt)
-                window.currentUserId = user.uid;
-                
-                // Display User ID 
-                const userIdDisplay = document.getElementById('user-id-display');
-                if (userIdDisplay) {
-                    userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
-                }
-
-                // Start the main application logic only once
-                isAppInitialized = true;
-                window.initializeApp();
-                
-            } else {
-                // CASE 2: No user (first time the listener fires). Attempt sign-in.
-                try {
-                    if (initialAuthToken) {
-                        // This will trigger the listener again with a valid user object upon success
-                        await signInWithCustomToken(window.auth, initialAuthToken);
-                    } else {
-                        // This will trigger the listener again with a valid user object upon success
-                        await signInAnonymously(window.auth);
-                    }
-                    // Crucially: return here and wait for the listener to be triggered by the sign-in success
-                    return;
-
-                } catch (error) {
-                    // CASE 3: Auth failed completely (rare, but prevents hang)
-                    console.error("Firebase Auth Error: Falling back to random ID and initializing.", error);
-                    
-                    // Set fallback ID and proceed to initialize
-                    window.currentUserId = crypto.randomUUID(); 
-                    
-                    // Display Fallback ID
-                    const userIdDisplay = document.getElementById('user-id-display');
-                    if (userIdDisplay) {
-                        userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
-                    }
-                    
-                    isAppInitialized = true;
-                    window.initializeApp();
-                }
-            }
-        });
-    </script>
+    <!-- Removed Firebase Initialization Script to enable instant loading -->
     
     <!-- Main container for the draggable element -->
     <section id="canvas-container" class="absolute inset-0 w-full h-full">
-        <!-- User ID Display (Now shows the authenticated ID) -->
-        <div class="absolute top-2 left-2 p-2 bg-white rounded-lg shadow-md text-sm text-gray-600 z-50">
-            Authenticated User ID: <span id="user-id-display">Signing In...</span>
-        </div>
+        <!-- Removed User ID display element -->
         <!-- Tile or Input Prompt Renders here -->
     </section>
 
@@ -135,6 +50,9 @@
         let localTileData = null; // Stores the single, non-persistent tile data locally.
         const MAX_DRAG_SESSIONS = 6; // <-- Limit to 6 moves (drag sessions)
         
+        // Generate a local, anonymous user ID instantly (no authentication required)
+        const currentUserId = crypto.randomUUID();
+
         const COLORS = {
             'Red': 'bg-red-500',
             'Orange': 'bg-orange-500',
@@ -229,7 +147,6 @@
             // Increment the move count
             localTileData.movesMade += 1;
             
-            // In the next step, this will be where we write to Firestore
             console.log(`Move completed. Moves made: ${localTileData.movesMade}`);
             
             // Re-render to update the moves count display and check for restrictions
@@ -310,7 +227,7 @@
                         ${isRestricted ? 'MOVES EXHAUSTED' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`}
                     </p>
                     <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none">
-                        ID: ${window.currentUserId.substring(0, 8) + '...'}
+                        ID: ${currentUserId.substring(0, 8) + '...'}
                     </p>
                 </div>
             `;
@@ -321,7 +238,7 @@
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
-                // FIX: Removed 'grayscale' to preserve the tile's color.
+                // Retain color, but reduce opacity and disallow cursor
                 tileElement.classList.add('opacity-75', 'cursor-not-allowed'); 
                 tileElement.classList.remove('grayscale');
             } else {
@@ -421,7 +338,7 @@
 
             const createNewTile = () => {
                 const name = input.value.trim();
-                if (!name || name.length === 0 || !window.currentUserId) return;
+                if (!name || name.length === 0) return;
 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
                     year: 'numeric', 
@@ -440,8 +357,8 @@
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
-                    userId: window.currentUserId, 
-                    movesMade: 0, // <-- Initialized move counter
+                    userId: currentUserId, // Use the locally generated ID
+                    movesMade: 0, 
                 };
 
                 // Render the tile and hide the prompt
@@ -458,12 +375,8 @@
             input.focus();
         }
 
-        /**
-         * Initializes the application state, called after Firebase Auth is complete.
-         */
-        window.initializeApp = function() {
-            renderInputPrompt();
-        };
+        // Start the application immediately since there is no Firebase Auth step
+        renderInputPrompt();
 
         // Re-render on resize to maintain correct drag behavior
         window.addEventListener('resize', renderTile); 
