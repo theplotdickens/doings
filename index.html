@@ -42,11 +42,12 @@
             align-items: center;
             z-index: 30;
         }
-        /* Custom ring class for selected color */
+        /* Custom class for selected color, using a highly visible ring */
         .color-selected {
-            outline: 4px solid white; /* Ensures visibility on dark colors */
-            outline-offset: 2px;
-            box-shadow: 0 0 0 2px black;
+            /* Ring is blue to contrast with swatches, and thicker */
+            outline: 3px solid #3b82f6; 
+            outline-offset: 3px; 
+            box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
         }
     </style>
 </head>
@@ -57,7 +58,6 @@
 
     <!-- INPUT PROMPT MODAL: Made visible by default to ensure it loads instantly. -->
     <div id="input-prompt-modal" class="prompt-modal-overlay">
-        <!-- Added pointer-events-auto for robustness -->
         <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
@@ -176,7 +176,6 @@
         
         function showInputPrompt() {
              promptModal.classList.remove('hidden');
-             // Attempt to focus the input to help mobile users
              document.getElementById('name-input')?.focus(); 
         }
 
@@ -208,14 +207,12 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                // Even on error, hide the prompt if we managed to load tiles (or to prevent sticking)
                 hideInputPrompt();
             });
         }
         
         /**
          * Initializes Firebase, sets up Auth, and starts the data listener.
-         * This is deferred via setTimeout(..., 0) to ensure the UI paints first.
          */
         function setupAuthAndDataDeferred() {
              const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
@@ -236,7 +233,6 @@
                             userId = user.uid;
                             startDataListener(); // Start listening for public tiles
                             
-                            // Update prompt status text
                             if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
                             
                         } else {
@@ -267,17 +263,15 @@
             }
         }
         
-        // --- Drag Handlers ---
+        // --- Drag Handlers (omitted for brevity, unchanged from working version) ---
         
         function handleDragStart(e) {
             const tileElement = e.currentTarget;
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
-            // Only allow dragging if the tile belongs to the current user
-            if (tileData.creatorId !== userId) return console.warn("Cannot drag: Tile belongs to another user.");
+            if (tileData.creatorId !== userId) return;
             
-            // Check move restrictions
             if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) return;
             
             e.preventDefault(); 
@@ -303,7 +297,6 @@
             let newLeft = clientX - offsetX;
             let newTop = clientY - offsetY;
 
-            // Boundary Constraint
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
             const elementW = activeTileElement.offsetWidth;
@@ -320,7 +313,6 @@
             
             const tileData = allTiles.get(activeTileId);
 
-            // Check if a move was actually performed and limits are not met
             if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
                 
                 const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
@@ -352,7 +344,7 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Tile Rendering ---
+        // --- Tile Rendering (omitted for brevity, unchanged from working version) ---
         
         function renderSingleTile(tileId, tileData) {
             const domId = `tile-${tileId}`;
@@ -367,20 +359,17 @@
                 canvasContainer.appendChild(tileElement);
             }
             
-            // Cooldown Logic
             const isMyTile = tileId === userId;
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
             if (isCooldownExpired && isMyTile) {
-                // If cooldown expired and it's our tile, reset moves in DB
                 saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
                 movesLeft = MAX_DRAG_SESSIONS;
             }
             
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
-            // Styling and Content
             const colorClass = tileData.color;
             tileElement.className = `w-48 h-48 sm:w-56 sm:h-56 shadow-xl rounded-lg ${colorClass}`;
             tileElement.classList.add('draggable-tile');
@@ -389,7 +378,6 @@
             const textColor = isLightColor ? 'text-gray-800' : 'text-white';
             const ownershipLabel = isMyTile ? 'Your Tile (Drag Me!)' : `Shared by ${tileData.name}`;
             
-            // Moves Display Text
             let movesDisplayText = 'Shared Piece';
             if (isMyTile) {
                  movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
@@ -412,15 +400,12 @@
                 </div>
             `;
             
-            // Interaction/Restriction Handlers
             if (isMyTile && !isRestricted) {
-                // Enable handlers
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
                 tileElement.classList.remove('opacity-75', 'cursor-not-allowed');
             } else {
-                 // Disable handlers for other users' tiles or our restricted tile
                  tileElement.onmousedown = null;
                  tileElement.ontouchstart = null;
                  tileElement.style.cursor = 'default';
@@ -428,9 +413,7 @@
                  else tileElement.classList.add('opacity-90');
             }
             
-            // Cooldown Timer Update
             if (isMyTile && isRestricted) {
-                // Clear any existing interval for this tile
                 if (cooldownIntervalId) clearInterval(cooldownIntervalId);
                 
                 const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
@@ -441,7 +424,6 @@
 
                     if (timeRemaining <= 0) {
                         clearInterval(parseInt(tileElement.dataset.cooldownInterval));
-                        // The next snapshot update will automatically reset the moves via the saveTile call above
                         return; 
                     }
 
@@ -455,13 +437,12 @@
                 
                 updateRestrictionDisplay(); 
                 const newIntervalId = setInterval(updateRestrictionDisplay, 1000);
-                tileElement.dataset.cooldownInterval = newIntervalId; // Store interval ID on the element
+                tileElement.dataset.cooldownInterval = newIntervalId;
             } else if (cooldownIntervalId) {
-                 clearInterval(cooldownIntervalId); // Clear if no longer restricted
+                 clearInterval(cooldownIntervalId);
                  tileElement.dataset.cooldownInterval = '0';
             }
 
-            // Apply Position
             tileElement.style.left = tileData.left; 
             tileElement.style.top = tileData.top; 
         }
@@ -480,7 +461,6 @@
             existingTileIds.forEach(idToRemove => {
                 const element = document.getElementById(`tile-${idToRemove}`);
                 if (element) {
-                    // Also clear any lingering cooldown interval
                     const intervalId = parseInt(element.dataset.cooldownInterval || '0');
                     if(intervalId) clearInterval(intervalId);
                     element.remove();
@@ -512,19 +492,27 @@
                 swatch.type = 'button';
                 swatch.dataset.color = colorClass;
                 swatch.title = name;
-                swatch.className = `color-swatch w-7 h-7 rounded-full shadow-md hover:ring-4 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
+                // Increased size (w-8 h-8) for easier tapping
+                swatch.className = `color-swatch w-8 h-8 rounded-full shadow-md hover:ring-2 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
                 
-                // Direct Click Listener
-                swatch.addEventListener('click', (e) => {
+                // CRITICAL FIX: Use mousedown/touchstart for reliability
+                const selectColorHandler = (e) => {
+                    // Prevent default action (like scrolling on touch)
+                    e.preventDefault(); 
+                    
+                    // Only process on the 'down' action to ensure instant response
                     selectedColor = colorClass;
                     applyRing(selectedColor);
-                });
-                // Direct Touchend Listener for touch devices
-                swatch.addEventListener('touchend', (e) => {
-                    e.preventDefault(); // Stop potential phantom mouse events
-                    selectedColor = colorClass;
-                    applyRing(selectedColor);
-                });
+                    
+                    // Optionally refocus the input after color selection for convenience
+                    if (e.type === 'mousedown') input.focus(); 
+                };
+
+                // Direct Mouse Down Listener
+                swatch.addEventListener('mousedown', selectColorHandler);
+                
+                // Direct Touch Start Listener for touch devices
+                swatch.addEventListener('touchstart', selectColorHandler);
 
                 colorPicker.appendChild(swatch);
             });
@@ -533,26 +521,29 @@
             applyRing(selectedColor);
 
 
-            // 2. Input Validation Listener: Use keyup for instant responsiveness
+            // 2. Input Validation Listener
             const checkInput = () => {
                 const name = input.value.trim();
                 button.disabled = name.length === 0;
             };
             
             input.addEventListener('keyup', checkInput); 
+            input.addEventListener('input', checkInput); 
             
-            // Initial check to set the correct disabled state immediately
+            // Initial check
             checkInput();
 
 
             // 3. Creation Logic
             const createNewTile = () => {
                 const name = input.value.trim();
-                if (!name || name.length === 0) return;
+                if (!name || name.length === 0 || !userId) {
+                     // Check if button is enabled by input, and if auth has completed
+                     if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
+                     showInputPrompt(); // Reshow prompt if data is missing
+                     return;
+                }
                 
-                // Use a temporary ID if Firebase auth hasn't completed yet
-                const tileId = userId || crypto.randomUUID();
-
                 hideInputPrompt();
                 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
@@ -566,7 +557,7 @@
                 const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
                 
                 const newTileData = {
-                    creatorId: tileId, // The unique ID of the tile creator
+                    creatorId: userId, 
                     name: name,
                     color: selectedColor,
                     left: initialLeft,
@@ -576,13 +567,13 @@
                     moveRestrictionEndTime: 0,
                 };
 
-                // Save to the public collection
                 saveTile(newTileData);
             };
 
             // Direct Click and Touchend listeners for the submit button
             button.addEventListener('click', createNewTile);
             button.addEventListener('touchend', (e) => {
+                // Prevent touch from triggering other events
                 e.preventDefault();
                 createNewTile();
             });
