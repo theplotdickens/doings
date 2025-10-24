@@ -507,21 +507,32 @@
             
             applyRing(selectedColor);
 
-            // Color Picker Listener
-            colorPicker.addEventListener('click', (e) => {
+            // Color Picker Listener: Using mouseup/touchend for reliability
+            colorPicker.addEventListener('mouseup', (e) => {
                 const swatch = e.target.closest('.color-swatch');
                 if (swatch) {
                     selectedColor = swatch.dataset.color;
                     applyRing(selectedColor);
                 }
             });
+            colorPicker.addEventListener('touchend', (e) => {
+                const swatch = e.target.closest('.color-swatch');
+                if (swatch) {
+                    selectedColor = swatch.dataset.color;
+                    applyRing(selectedColor);
+                    e.preventDefault(); // Prevents double click/tap
+                }
+            });
 
-            // Input Validation Listener
-            input.addEventListener('input', () => {
+
+            // Input Validation Listener: Use keyup for instant responsiveness
+            input.addEventListener('keyup', () => { 
                 const name = input.value.trim();
                 button.disabled = name.length === 0; 
             });
-            input.dispatchEvent(new Event('input')); 
+            
+            // Initial check to set the correct disabled state immediately
+            button.disabled = input.value.trim().length === 0;
 
 
             // Creation Logic
