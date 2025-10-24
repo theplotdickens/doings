@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Draggable Tile Local Test</title>
+    <title>Draggable Tile Persistence Test</title>
     <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -31,30 +31,54 @@
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); /* Larger shadow when grabbing */
         }
-        /* Style for the User ID display (now removed from HTML) */
     </style>
 </head>
 <body>
     
-    <!-- Removed Firebase Initialization Script to enable instant loading -->
-    
     <!-- Main container for the draggable element -->
-    <section id="canvas-container" class="absolute inset-0 w-full h-full">
-        <!-- Removed User ID display element -->
+    <section id="canvas-container" class="absolute inset-0 w-full h-full flex justify-center items-center">
         <!-- Tile or Input Prompt Renders here -->
+        <div id="loading-state" class="text-gray-600 text-lg">
+            Loading authentication...
+        </div>
     </section>
 
-    <script>
+    <script type="module">
+        // --- Firebase Imports ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Removed setPersistence, browserLocalPersistence
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Setup (Using global variables provided by the environment) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let tileDocId = 'user_tile_doc'; // Fixed document ID for the single user tile
+        let authFinishedAttempt = false; // NEW FLAG: Ensures only one resolver handles the UI transition
+        
+        // Initialize Firebase
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('Debug'); // Enable debug logging for Firebase issues
+        } else {
+            console.error("FATAL: Firebase configuration is missing. Persistence disabled.");
+            document.getElementById('loading-state').textContent = "Error: Missing Firebase Config.";
+        }
+        
         // --- Global State ---
         const canvasContainer = document.getElementById('canvas-container');
-        let localTileData = null; // Stores the single, non-persistent tile data locally.
-        const MAX_DRAG_SESSIONS = 6; // <-- Limit to 6 moves (drag sessions)
+        let localTileData = null; // Stores the single tile data retrieved from Firestore.
+        const MAX_DRAG_SESSIONS = 6; // Limit to 6 moves
         const COOLDOWN_DURATION_MS = 60000; // 1 minute cooldown
-        let cooldownIntervalId = null; // ID to manage the countdown timer
+        let cooldownIntervalId = null; 
         
-        // Generate a local, anonymous user ID instantly (no authentication required)
-        const currentUserId = crypto.randomUUID();
-
         const COLORS = {
             'Red': 'bg-red-500',
             'Orange': 'bg-orange-500',
@@ -73,26 +97,119 @@
         let offsetX = 0;
         let offsetY = 0;
         
-        // Tile dimensions (for bounds checking)
         const TILE_SIZE_SM = 192; // w-48
         const TILE_SIZE_LG = 224; // sm:w-56 
 
-        /**
-         * Returns the correct tile size based on the current viewport.
-         */
+        // --- Utility Functions ---
+
         function getCurrentTileSize() {
             return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
         }
+
+        function getTileDocRef() {
+            if (!db || !userId) return null;
+            // Document path: /artifacts/{appId}/users/{userId}/tiles/{documentId}
+            return doc(db, 'artifacts', appId, 'users', userId, 'tiles', tileDocId); 
+        }
+
+        async function saveTile(data) {
+            const tileRef = getTileDocRef();
+            if (tileRef) {
+                try {
+                    // Use setDoc with merge to only update fields present in 'data'
+                    await setDoc(tileRef, data, { merge: true });
+                } catch (error) {
+                    console.error("Error saving tile data:", error);
+                }
+            }
+        }
         
-        // --- Drag Handlers ---
+        // --- Data Listener and Auth Setup ---
+
+        function startDataListener() {
+            const tileRef = getTileDocRef();
+            if (tileRef) {
+                // Set up real-time listener
+                onSnapshot(tileRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        // Tile exists in Firestore, update local state and render
+                        localTileData = docSnap.data();
+                        renderTile();
+                    } else {
+                        // Tile does not exist, show creation prompt
+                        localTileData = null;
+                        renderInputPrompt();
+                    }
+                }, (error) => {
+                    console.error("Error listening to tile data:", error);
+                });
+            }
+        }
+        
+        // NEW: Centralized function to transition the UI out of the loading state
+        function finishLoading(authSuccess) {
+            if (authFinishedAttempt) return; // Already resolved, do nothing
+            authFinishedAttempt = true;
+
+            const loadingState = document.getElementById('loading-state');
+            if (loadingState) loadingState.remove();
+
+            if (!authSuccess) {
+                // Auth failed or timed out. Fallback to anonymous state.
+                userId = null;
+                localTileData = null;
+                renderInputPrompt();
+            }
+            // If authSuccess is true, the onAuthStateChanged handler already called startDataListener.
+        }
+
+        async function setupAuthAndData() {
+            
+            // 1. Set up the guaranteed UI resolver (timeout)
+            // If onAuthStateChanged hasn't fired in 2s, force the app to be usable.
+            const timeoutId = setTimeout(() => {
+                console.warn("Auth timeout reached (2s). Forcing UI render fallback.");
+                finishLoading(false); 
+            }, 2000);
+
+            // 2. Start the authentication listener
+            onAuthStateChanged(auth, (user) => {
+                clearTimeout(timeoutId); // Cancel the timeout if auth resolves first
+                
+                if (user) {
+                    userId = user.uid;
+                    startDataListener(); // Start data fetching
+                    finishLoading(true); // Signal success
+                } else {
+                    // User is signed out/anonymous failed, but auth listener finished its job
+                    finishLoading(false); // Signal failure, which leads to renderInputPrompt()
+                }
+            });
+            
+            // 3. Attempt sign-in (non-blocking)
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token.length > 0) {
+                    signInWithCustomToken(auth, __initial_auth_token)
+                        .catch(error => console.error("Custom Sign-in Failed (non-blocking):", error));
+                } else {
+                    signInAnonymously(auth)
+                        .catch(error => console.error("Anonymous Sign-in Failed (non-blocking):", error));
+                }
+            } catch (error) {
+                // If a sync error occurred during the setup call itself, immediately trigger the fallback
+                console.error("Firebase Sign-in Attempt Error (sync):", error);
+                clearTimeout(timeoutId);
+                finishLoading(false);
+            }
+        }
+        
+        // --- Drag Handlers (No changes here, they look fine) ---
 
         function handleDragStart(e) {
-            // Check if the move limit has been reached AND if the cooldown is active
+            // Only start drag if not restricted
             if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
                 return;
             }
-
-            // Only start drag if it's the element itself
             if (e.target.id !== 'my-tile') return;
 
             e.preventDefault(); 
@@ -124,7 +241,6 @@
             const elementW = activeTileElement.offsetWidth;
             const elementH = activeTileElement.offsetHeight;
 
-            // Clamp positions to stay within bounds
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
             // --- END BOUNDARY LOGIC ---
@@ -132,15 +248,10 @@
             // Apply the constrained position
             activeTileElement.style.left = `${newLeft}px`;
             activeTileElement.style.top = `${newTop}px`;
-            
-            // Update local state (for use if we re-render or resize)
-            localTileData.left = activeTileElement.style.left;
-            localTileData.top = activeTileElement.style.top;
         }
 
         /**
          * Called when a drag session ends successfully.
-         * Increments the move counter and triggers a re-render.
          */
         function finalizeMove() {
             if (!localTileData) return;
@@ -150,26 +261,31 @@
                 return;
             }
             
-            // Increment the move count
-            localTileData.movesMade += 1;
+            // 1. Increment move count
+            const newMovesMade = localTileData.movesMade + 1;
+            let newRestrictionEndTime = localTileData.moveRestrictionEndTime;
             
-            // If this move *hits* the limit, set the cooldown time
-            if (localTileData.movesMade >= MAX_DRAG_SESSIONS) {
-                // Set cooldown for 60 seconds (1 minute)
-                localTileData.moveRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
+            // 2. If this move *hits* the limit, set the cooldown time
+            if (newMovesMade >= MAX_DRAG_SESSIONS) {
+                newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
             }
 
-            console.log(`Move completed. Moves made: ${localTileData.movesMade}`);
+            // 3. Update Firestore with new state
+            saveTile({
+                movesMade: newMovesMade,
+                moveRestrictionEndTime: newRestrictionEndTime,
+                left: activeTileElement.style.left,
+                top: activeTileElement.style.top,
+            });
             
-            // Re-render to update the moves count display and check for restrictions
-            renderTile(); 
+            // Note: renderTile() will be called automatically by the onSnapshot listener once the data is saved
         }
 
         function handleDragEnd() {
             if (!isDragging) return;
             
-            // Only finalize move if we had an active tile element (i.e., a drag session occurred)
             if (activeTileElement) {
+                // Save the finalized position and increment the move counter
                 finalizeMove();
             }
             
@@ -184,7 +300,7 @@
         document.addEventListener('touchend', handleDragEnd);
         document.addEventListener('touchcancel', handleDragEnd);
 
-        // --- Core Functions ---
+        // --- Rendering Functions ---
 
         /**
          * Renders the single tile DOM element based on localTileData.
@@ -200,10 +316,11 @@
             const inputPrompt = document.getElementById('input-prompt');
             if(inputPrompt) {
                 inputPrompt.remove();
-                canvasContainer.className = 'absolute inset-0 w-full h-full';
             }
 
-            if (!localTileData) return;
+            if (!localTileData) {
+                return; 
+            }
             
             const tileData = localTileData;
             const domId = 'my-tile';
@@ -214,41 +331,43 @@
                 tileElement.id = domId;
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
+                // Ensure the canvas is not in the centered-input-view class
+                canvasContainer.classList.remove('centered-input-view');
             }
             
             // --- MOVES LEFT & COOLDOWN LOGIC ---
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
             
-            // Check if cooldown is over AND we were in the restricted state
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
+            // Check for and handle cooldown expiration
             if (isCooldownExpired) {
-                // Reset state to allow moves again
-                tileData.movesMade = 0;
-                tileData.moveRestrictionEndTime = 0; 
-                movesLeft = MAX_DRAG_SESSIONS; // Update display variable immediately
+                // Only save the reset if it hasn't been saved yet (i.e., moveRestrictionEndTime > 0)
+                if (tileData.moveRestrictionEndTime > 0) {
+                    saveTile({
+                        movesMade: 0,
+                        moveRestrictionEndTime: 0 
+                    });
+                }
+                movesLeft = MAX_DRAG_SESSIONS; // Update display variable
             }
             
-            // Determine current restriction status
+            // Determine current restriction status based on current state
             const isRestricted = tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
 
-            // Determine initial display text
             let movesDisplayText = isRestricted 
-                ? 'COOLDOWN: initializing...' // Placeholder
+                ? 'COOLDOWN: initializing...' 
                 : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
             // --- END MOVES LEFT & COOLDOWN LOGIC ---
 
-            // Apply styling classes
+            // Apply styling
             const colorClass = tileData.color;
-
             tileElement.className = `w-48 h-48 sm:w-56 sm:h-56 shadow-xl rounded-lg ${colorClass}`;
-            tileElement.classList.add('draggable-tile'); // Re-add after clearing className
+            tileElement.classList.add('draggable-tile');
 
-            // Determine text color for contrast
             const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
             const textColor = isLightColor ? 'text-gray-800' : 'text-white';
             
-            // Set the contents 
             tileElement.innerHTML = `
                 <div id="my-tile" class="h-full w-full flex flex-col justify-center items-center p-4">
                     <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none pointer-events-none">
@@ -260,13 +379,13 @@
                     <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100 pointer-events-none" id="moves-display-text">
                         ${movesDisplayText}
                     </p>
-                    <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none">
-                        ID: ${currentUserId.substring(0, 8) + '...'}
+                    <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none break-all text-ellipsis overflow-hidden">
+                        USER ID: ${userId ? userId : 'N/A'}
                     </p>
                 </div>
             `;
             
-            // 3. Set up dynamic display and interval if restricted
+            // Set up dynamic display and interval if restricted
             if (isRestricted) {
                 const movesDisplayElement = tileElement.querySelector('#moves-display-text');
 
@@ -276,13 +395,11 @@
 
                     if (timeRemaining <= 0) {
                         clearInterval(cooldownIntervalId);
-                        cooldownIntervalId = null;
-                        // Cooldown finished, re-render to reset state and re-enable tile
-                        renderTile();
+                        // Trigger renderTile to reset state via saveTile call
+                        renderTile(); 
                         return;
                     }
 
-                    // Calculate minutes and seconds (rounding up to the nearest second)
                     const secondsTotal = Math.ceil(timeRemaining / 1000);
                     const minutes = Math.floor(secondsTotal / 60);
                     const seconds = secondsTotal % 60;
@@ -294,7 +411,6 @@
                     }
                 };
                 
-                // Initial update and start interval
                 updateRestrictionDisplay(); 
                 cooldownIntervalId = setInterval(updateRestrictionDisplay, 1000);
                 
@@ -303,14 +419,12 @@
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
                 tileElement.classList.add('opacity-75', 'cursor-not-allowed'); 
-                tileElement.classList.remove('grayscale');
-
             } else {
                 // Ensure handlers are active
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
-                tileElement.classList.remove('grayscale', 'opacity-75', 'cursor-not-allowed');
+                tileElement.classList.remove('opacity-75', 'cursor-not-allowed');
             }
 
             // Apply position
@@ -322,13 +436,14 @@
          * Renders the name and color input prompt screen.
          */
         function renderInputPrompt() {
-            // Don't render if a tile already exists
-            if (localTileData) return;
-            
-            // Clear canvas and set to centered view
+            // 1. Ensure the canvas is ready for the prompt
+            if (document.getElementById('my-tile')) {
+                document.getElementById('my-tile').remove();
+            }
             canvasContainer.innerHTML = '';
             canvasContainer.className = 'w-full centered-input-view';
             
+            // 2. Build the prompt UI
             const promptDiv = document.createElement('div');
             promptDiv.id = 'input-prompt';
             promptDiv.className = 'w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl';
@@ -344,6 +459,7 @@
             promptDiv.innerHTML = `
                 <div class="space-y-4">
                     <p class="text-xl font-bold text-gray-800 text-center">Create Your Tile</p>
+                    <p class="text-xs text-center text-gray-500 break-all text-ellipsis overflow-hidden">USER ID: ${userId ? userId : 'Anonymous (No Persistence)'}</p>
 
                     <input
                         type="text"
@@ -397,8 +513,11 @@
 
             input.addEventListener('input', () => {
                 const name = input.value.trim();
-                button.disabled = name.length === 0;
+                // Disable only if name is empty. If userId is null, it creates a non-persistent tile.
+                button.disabled = name.length === 0; 
             });
+            input.dispatchEvent(new Event('input')); // Initial check
+
 
             const createNewTile = () => {
                 const name = input.value.trim();
@@ -415,19 +534,25 @@
                 const initialLeft = `${(window.innerWidth / 2) - (size / 2)}px`;
                 const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
                 
-                localTileData = {
+                const newTileData = {
                     name: name,
                     color: selectedColor,
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
-                    userId: currentUserId, // Use the locally generated ID
+                    userId: userId, 
                     movesMade: 0, 
-                    moveRestrictionEndTime: 0, // <-- New state for cooldown end time
+                    moveRestrictionEndTime: 0,
                 };
 
-                // Render the tile and hide the prompt
-                renderTile();
+                // Save to Firestore if authenticated, otherwise render locally
+                if (userId) {
+                    saveTile(newTileData);
+                } else {
+                    // Fallback for non-persistent local rendering if auth fails
+                    localTileData = newTileData;
+                    renderTile();
+                }
             };
 
             button.addEventListener('click', createNewTile);
@@ -440,8 +565,14 @@
             input.focus();
         }
 
-        // Start the application immediately since there is no Firebase Auth step
-        renderInputPrompt();
+        // Start the application by setting up Firebase Auth
+        if (db) {
+            setupAuthAndData();
+        } else {
+             // If config failed, display the prompt without persistence
+             document.getElementById('loading-state').remove();
+             renderInputPrompt();
+        }
 
         // Re-render on resize to maintain correct drag behavior
         window.addEventListener('resize', renderTile); 
