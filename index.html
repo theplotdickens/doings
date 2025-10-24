@@ -49,6 +49,8 @@
         const canvasContainer = document.getElementById('canvas-container');
         let localTileData = null; // Stores the single, non-persistent tile data locally.
         const MAX_DRAG_SESSIONS = 6; // <-- Limit to 6 moves (drag sessions)
+        const COOLDOWN_DURATION_MS = 60000; // 1 minute cooldown
+        let cooldownIntervalId = null; // ID to manage the countdown timer
         
         // Generate a local, anonymous user ID instantly (no authentication required)
         const currentUserId = crypto.randomUUID();
@@ -85,8 +87,10 @@
         // --- Drag Handlers ---
 
         function handleDragStart(e) {
-            // Check if the move limit has been reached
-            if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS) return; 
+            // Check if the move limit has been reached AND if the cooldown is active
+            if (localTileData && localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
+                return;
+            }
 
             // Only start drag if it's the element itself
             if (e.target.id !== 'my-tile') return;
@@ -141,12 +145,20 @@
         function finalizeMove() {
             if (!localTileData) return;
             
-            // Check if limit is already reached
-            if (localTileData.movesMade >= MAX_DRAG_SESSIONS) return;
-
+            // Check if limit is already reached and cooldown is active
+            if (localTileData.movesMade >= MAX_DRAG_SESSIONS && localTileData.moveRestrictionEndTime > Date.now()) {
+                return;
+            }
+            
             // Increment the move count
             localTileData.movesMade += 1;
             
+            // If this move *hits* the limit, set the cooldown time
+            if (localTileData.movesMade >= MAX_DRAG_SESSIONS) {
+                // Set cooldown for 60 seconds (1 minute)
+                localTileData.moveRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
+            }
+
             console.log(`Move completed. Moves made: ${localTileData.movesMade}`);
             
             // Re-render to update the moves count display and check for restrictions
@@ -178,6 +190,12 @@
          * Renders the single tile DOM element based on localTileData.
          */
         function renderTile() {
+            // 1. Clear previous interval (always do this first in render)
+            if (cooldownIntervalId) {
+                clearInterval(cooldownIntervalId);
+                cooldownIntervalId = null;
+            }
+
             // Remove prompt if it exists
             const inputPrompt = document.getElementById('input-prompt');
             if(inputPrompt) {
@@ -198,11 +216,27 @@
                 canvasContainer.appendChild(tileElement);
             }
             
-            // --- MOVES LEFT LOGIC ---
-            const movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
-            const isRestricted = movesLeft <= 0;
-            // --- END MOVES LEFT LOGIC ---
+            // --- MOVES LEFT & COOLDOWN LOGIC ---
+            let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
+            
+            // Check if cooldown is over AND we were in the restricted state
+            const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
+            
+            if (isCooldownExpired) {
+                // Reset state to allow moves again
+                tileData.movesMade = 0;
+                tileData.moveRestrictionEndTime = 0; 
+                movesLeft = MAX_DRAG_SESSIONS; // Update display variable immediately
+            }
+            
+            // Determine current restriction status
+            const isRestricted = tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
 
+            // Determine initial display text
+            let movesDisplayText = isRestricted 
+                ? 'COOLDOWN: initializing...' // Placeholder
+                : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
+            // --- END MOVES LEFT & COOLDOWN LOGIC ---
 
             // Apply styling classes
             const colorClass = tileData.color;
@@ -223,8 +257,8 @@
                     <p class="text-sm italic font-normal ${textColor} opacity-80 mt-2 select-none pointer-events-none">
                         Created: ${tileData.createdAt}
                     </p>
-                    <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100 pointer-events-none">
-                        ${isRestricted ? 'MOVES EXHAUSTED' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`}
+                    <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100 pointer-events-none" id="moves-display-text">
+                        ${movesDisplayText}
                     </p>
                     <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 pointer-events-none">
                         ID: ${currentUserId.substring(0, 8) + '...'}
@@ -232,17 +266,47 @@
                 </div>
             `;
             
-            // Apply state-based class changes (disable visual if needed)
+            // 3. Set up dynamic display and interval if restricted
             if (isRestricted) {
-                // Disable drag handlers and add visual cues
+                const movesDisplayElement = tileElement.querySelector('#moves-display-text');
+
+                const updateRestrictionDisplay = () => {
+                    const now = Date.now();
+                    const timeRemaining = tileData.moveRestrictionEndTime - now;
+
+                    if (timeRemaining <= 0) {
+                        clearInterval(cooldownIntervalId);
+                        cooldownIntervalId = null;
+                        // Cooldown finished, re-render to reset state and re-enable tile
+                        renderTile();
+                        return;
+                    }
+
+                    // Calculate minutes and seconds (rounding up to the nearest second)
+                    const secondsTotal = Math.ceil(timeRemaining / 1000);
+                    const minutes = Math.floor(secondsTotal / 60);
+                    const seconds = secondsTotal % 60;
+                    
+                    const displayTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
+                    
+                    if(movesDisplayElement) {
+                        movesDisplayElement.textContent = `COOLDOWN: ${displayTime}`;
+                    }
+                };
+                
+                // Initial update and start interval
+                updateRestrictionDisplay(); 
+                cooldownIntervalId = setInterval(updateRestrictionDisplay, 1000);
+                
+                // Disable handlers and apply visual cues
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
-                // Retain color, but reduce opacity and disallow cursor
                 tileElement.classList.add('opacity-75', 'cursor-not-allowed'); 
                 tileElement.classList.remove('grayscale');
+
             } else {
-                // Ensure handlers are active if moves remain
+                // Ensure handlers are active
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
@@ -359,6 +423,7 @@
                     createdAt: creationDate,
                     userId: currentUserId, // Use the locally generated ID
                     movesMade: 0, 
+                    moveRestrictionEndTime: 0, // <-- New state for cooldown end time
                 };
 
                 // Render the tile and hide the prompt
