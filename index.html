@@ -448,9 +448,9 @@
             const colorPicker = document.getElementById('color-picker');
             const userStatusText = document.getElementById('user-status-text');
 
-            // Update status text after UI render, in case auth finished quickly
+            // Set initial status text while we wait for the deferred initialization
             if (!userId) {
-                userStatusText.textContent = 'Status: Waiting for Firebase to initialize...';
+                userStatusText.textContent = 'Status: UI loaded. Initializing Firebase...';
             }
 
 
@@ -534,26 +534,36 @@
             // 2. Render the interactive UI prompt immediately
             renderInputPrompt();
             
-            // --- Synchronous Firebase Initialization (AFTER UI is rendered) ---
-            const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-            
-            if (Object.keys(firebaseConfig).length > 0) {
-                app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                setLogLevel('Debug');
-            } else {
-                console.error("FATAL: Firebase configuration is missing.");
-            }
-            // --- End synchronous Firebase initialization ---
+            // 3. Defer ALL Firebase Initialization to ensure UI is completely painted first.
+            // This is critical to prevent synchronous blocking in restricted environments.
+            setTimeout(() => {
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                
+                if (Object.keys(firebaseConfig).length > 0) {
+                    try {
+                        // Synchronous initialization of Firebase services
+                        app = initializeApp(firebaseConfig);
+                        db = getFirestore(app);
+                        auth = getAuth(app);
+                        setLogLevel('Debug');
+                        
+                        // Update status text once initialized, before trying auth
+                        const statusText = document.getElementById('user-status-text');
+                        if (statusText) statusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
-            // 3. Start the non-blocking authentication in the background
-            if (db) {
-                setupAuthAndData();
-            } else {
-                const statusText = document.getElementById('user-status-text');
-                if (statusText) statusText.textContent = "Status: Firebase connection failed.";
-            }
+                        // Start the non-blocking authentication in the background
+                        setupAuthAndData();
+                    } catch (error) {
+                        console.error("FATAL: Error during Firebase initialization:", error);
+                        const statusText = document.getElementById('user-status-text');
+                        if (statusText) statusText.textContent = "Status: Firebase initialization failed.";
+                    }
+                } else {
+                    console.error("FATAL: Firebase configuration is missing.");
+                    const statusText = document.getElementById('user-status-text');
+                    if (statusText) statusText.textContent = "Status: Firebase config missing. Non-persistent session.";
+                }
+            }, 0); 
 
             // 4. Ensure responsiveness
             window.addEventListener('resize', renderTile); 
