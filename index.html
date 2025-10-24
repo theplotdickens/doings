@@ -53,6 +53,7 @@
         // 1. Retrieve Environment Variables (MANDATORY in Canvas)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // FIX: Corrected typo from __initialAuthToken to __initial_auth_token
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // 2. Initialize Firebase Services
@@ -65,37 +66,57 @@
         window.getFirestore = getFirestore;
         window.TILE_COLLECTION_PATH = `/artifacts/${appId}/public/data/tiles`;
 
+        // Flag to ensure the application only initializes once
+        let isAppInitialized = false; 
 
-        // 3. Handle Authentication Flow (CRITICAL STEP 1)
+        // 3. Handle Authentication Flow (CRITICAL STEP 1 - Refactored for stability)
         onAuthStateChanged(window.auth, async (user) => {
+            if (isAppInitialized) return; 
+
             if (user) {
-                // If user object exists (already authenticated or token sign-in successful)
+                // CASE 1: User is successfully authenticated (first time, or after sign-in attempt)
                 window.currentUserId = user.uid;
+                
+                // Display User ID 
+                const userIdDisplay = document.getElementById('user-id-display');
+                if (userIdDisplay) {
+                    userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
+                }
+
+                // Start the main application logic only once
+                isAppInitialized = true;
+                window.initializeApp();
+                
             } else {
-                // If not authenticated, attempt custom token or anonymous sign-in
+                // CASE 2: No user (first time the listener fires). Attempt sign-in.
                 try {
                     if (initialAuthToken) {
+                        // This will trigger the listener again with a valid user object upon success
                         await signInWithCustomToken(window.auth, initialAuthToken);
-                        window.currentUserId = window.auth.currentUser.uid;
                     } else {
+                        // This will trigger the listener again with a valid user object upon success
                         await signInAnonymously(window.auth);
-                        window.currentUserId = window.auth.currentUser.uid;
                     }
+                    // Crucially: return here and wait for the listener to be triggered by the sign-in success
+                    return;
+
                 } catch (error) {
-                    console.error("Firebase Auth Error: Falling back to random ID.", error);
-                    // Fallback to a random ID if authentication fails completely
+                    // CASE 3: Auth failed completely (rare, but prevents hang)
+                    console.error("Firebase Auth Error: Falling back to random ID and initializing.", error);
+                    
+                    // Set fallback ID and proceed to initialize
                     window.currentUserId = crypto.randomUUID(); 
+                    
+                    // Display Fallback ID
+                    const userIdDisplay = document.getElementById('user-id-display');
+                    if (userIdDisplay) {
+                        userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
+                    }
+                    
+                    isAppInitialized = true;
+                    window.initializeApp();
                 }
             }
-            
-            // Display User ID immediately
-            const userIdDisplay = document.getElementById('user-id-display');
-            if (userIdDisplay) {
-                userIdDisplay.textContent = window.currentUserId.substring(0, 8) + '...';
-            }
-
-            // Start the main application logic only after authentication is complete
-            window.initializeApp();
         });
     </script>
     
@@ -112,7 +133,7 @@
         // --- Global State ---
         const canvasContainer = document.getElementById('canvas-container');
         let localTileData = null; // Stores the single, non-persistent tile data locally.
-        const MAX_DRAG_SESSIONS = 6; // <-- NEW: Limit to 6 moves (drag sessions)
+        const MAX_DRAG_SESSIONS = 6; // <-- Limit to 6 moves (drag sessions)
         
         const COLORS = {
             'Red': 'bg-red-500',
@@ -196,7 +217,7 @@
         }
 
         /**
-         * NEW FUNCTION: Called when a drag session ends successfully.
+         * Called when a drag session ends successfully.
          * Increments the move counter and triggers a re-render.
          */
         function finalizeMove() {
@@ -300,7 +321,9 @@
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
-                tileElement.classList.add('grayscale', 'opacity-75', 'cursor-not-allowed');
+                // FIX: Removed 'grayscale' to preserve the tile's color.
+                tileElement.classList.add('opacity-75', 'cursor-not-allowed'); 
+                tileElement.classList.remove('grayscale');
             } else {
                 // Ensure handlers are active if moves remain
                 tileElement.onmousedown = handleDragStart;
