@@ -13,7 +13,7 @@
             background-color: #f0f3f6;
             min-height: 100vh;
             margin: 0;
-            overflow: hidden; /* Prevent body scroll when tile is near edge */
+            overflow: hidden; 
         }
         #canvas-container {
              position: absolute;
@@ -26,12 +26,12 @@
             user-select: none;
             cursor: grab;
             transition: box-shadow 0.3s ease;
-            z-index: 10; /* Ensure tiles are above the prompt when hidden */
+            z-index: 10; 
         }
         .draggable-tile:active {
             cursor: grabbing;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); /* Larger shadow when grabbing */
-            z-index: 20; /* Bring active tile to front */
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
+            z-index: 20; 
         }
         .prompt-modal-overlay {
             position: absolute;
@@ -49,11 +49,45 @@
     <!-- Main container for all draggable tiles -->
     <section id="canvas-container"></section>
 
-    <!-- Modal for tile creation (will be rendered instantly) -->
-    <div id="prompt-area"></div>
+    <!-- INPUT PROMPT MODAL: Made visible by default to ensure it loads instantly. -->
+    <div id="input-prompt-modal" class="prompt-modal-overlay">
+        <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all">
+            <div class="space-y-4">
+                <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
+                <!-- Status text for Firebase initialization -->
+                <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
+                    Status: UI loaded. Initializing services...
+                </p>
+
+                <input
+                    type="text"
+                    id="name-input"
+                    placeholder="Enter your display name (max 15 chars)"
+                    class="w-full px-3 py-2 border border-gray-400 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                    autocomplete="off"
+                    maxlength="15"
+                >
+                
+                <div class="flex flex-col space-y-2">
+                    <p class="text-sm font-medium text-gray-600 text-center">Choose a Color</p>
+                    <div id="color-picker" class="flex justify-between items-center px-2">
+                        <!-- Swatches rendered here by JS -->
+                    </div>
+                </div>
+
+                <button
+                    id="submit-button"
+                    class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                    disabled
+                >
+                    Create Tile
+                </button>
+            </div>
+        </div>
+    </div>
 
     <script type="module">
-        // --- Firebase Imports ---
+        // --- Firebase Imports (Deferred in the module script) ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -64,18 +98,18 @@
         let app = null;
         let db = null;
         let auth = null;
-        let userId = null; // Current user's unique ID
+        let userId = null; 
         
         // --- Global App State ---
         const canvasContainer = document.getElementById('canvas-container');
-        const promptArea = document.getElementById('prompt-area');
+        const promptModal = document.getElementById('input-prompt-modal');
+        const userStatusText = document.getElementById('user-status-text');
         
-        // Map<string, TileData> - Stores all tiles retrieved from the public collection
         let allTiles = new Map(); 
         
+        // Drag limit constants
         const MAX_DRAG_SESSIONS = 6;
         const COOLDOWN_DURATION_MS = 60000;
-        let cooldownIntervalId = null; 
         
         const COLORS = {
             'Red': 'bg-red-500',
@@ -89,7 +123,7 @@
         };
         let selectedColor = COLORS['Red'];
         
-        // --- Drag State Variables ---
+        // Drag State Variables
         let isDragging = false;
         let activeTileElement = null;
         let activeTileId = null;
@@ -105,10 +139,6 @@
             return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
         }
         
-        /**
-         * Returns the document reference for a specific tile in the public collection.
-         * Tiles are indexed by the creator's userId for simplicity.
-         */
         function getTileDocRef(tileId) {
             if (!db) return null;
             // Document path: /artifacts/{appId}/public/data/shared_tiles/{tileId}
@@ -122,16 +152,26 @@
             const tileRef = getTileDocRef(tileId);
             if (tileRef) {
                 try {
-                    // Use setDoc with merge: true to update position/moves
                     await setDoc(tileRef, data, { merge: true });
                 } catch (error) {
                     console.error("Error saving tile data:", error);
                 }
             } else {
-                 console.warn("Save requested, but no valid db connection. Data will be non-persistent.");
+                 console.warn("Save requested, but no valid db connection.");
             }
         }
         
+        // --- UI Control ---
+        
+        function hideInputPrompt() {
+            promptModal.classList.add('hidden');
+        }
+        
+        function showInputPrompt() {
+             promptModal.classList.remove('hidden');
+             document.getElementById('name-input')?.focus();
+        }
+
         // --- Data Listener and Auth Setup ---
 
         function startDataListener() {
@@ -152,31 +192,34 @@
                 renderAllTiles();
                 
                 // Hide or show the prompt based on if the current user has a tile
-                if (!allTiles.has(userId) && userId) {
+                if (userId && !allTiles.has(userId)) {
                     showInputPrompt();
+                } else {
+                    hideInputPrompt();
                 }
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
+                // Even on error, hide the prompt if we managed to load tiles (or to prevent sticking)
+                hideInputPrompt();
             });
         }
         
         /**
          * Initializes Firebase, sets up Auth, and starts the data listener.
-         * This is called via setTimeout to ensure it runs non-blockingly.
+         * This is deferred via setTimeout(..., 0) to ensure the UI paints first.
          */
         function setupAuthAndDataDeferred() {
              const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
             
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
-                    // Synchronous initialization of Firebase services
+                    // Initialize Firebase services
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
                     setLogLevel('Debug');
                     
-                    const userStatusText = document.getElementById('user-status-text');
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
                     // Set up the Auth State listener first
@@ -185,22 +228,14 @@
                             userId = user.uid;
                             startDataListener(); // Start listening for public tiles
                             
-                            // Update prompt to show user ID after successful sign-in
-                            const statusText = document.getElementById('user-status-text');
-                            if (statusText) statusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
-
-                            // If user is signed in but has no tile, show the prompt
-                            if (!allTiles.has(userId)) {
-                                showInputPrompt();
-                            } else {
-                                hideInputPrompt();
-                            }
+                            // Update prompt status text
+                            if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
                             
                         } else {
                             userId = null; 
-                            console.warn("User signed out or auth failed.");
-                            const statusText = document.getElementById('user-status-text');
-                            if (statusText) statusText.textContent = "Status: Non-persistent session. Sign-in failed.";
+                            console.warn("User signed out or auth failed. Running non-persistent.");
+                            if (userStatusText) userStatusText.textContent = "Status: Sign-in failed. Tile will not be persistent or shared.";
+                            showInputPrompt();
                         }
                     });
                     
@@ -215,12 +250,12 @@
 
                 } catch (error) {
                     console.error("FATAL: Error during Firebase initialization:", error);
-                    const statusText = document.getElementById('user-status-text');
-                    if (statusText) statusText.textContent = "Status: Firebase initialization failed. Local session only.";
+                    if (userStatusText) userStatusText.textContent = "Status: Firebase initialization failed. Local session only.";
+                    showInputPrompt();
                 }
             } else {
-                const statusText = document.getElementById('user-status-text');
-                if (statusText) statusText.textContent = "Status: Firebase config missing. Local session only.";
+                if (userStatusText) userStatusText.textContent = "Status: Firebase config missing. Local session only.";
+                showInputPrompt();
             }
         }
         
@@ -231,16 +266,12 @@
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
-            // Only allow dragging if not restricted and the tile belongs to the current user
-            if (tileData.creatorId !== userId) {
-                 console.warn("Cannot drag: Tile belongs to another user.");
-                 return;
-            }
-            if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) {
-                return;
-            }
-            if (e.target.id !== tileElement.id) return; // Only allow drag on the tile body
-
+            // Only allow dragging if the tile belongs to the current user
+            if (tileData.creatorId !== userId) return console.warn("Cannot drag: Tile belongs to another user.");
+            
+            // Check move restrictions
+            if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) return;
+            
             e.preventDefault(); 
             isDragging = true;
             activeTileElement = tileElement; 
@@ -256,7 +287,6 @@
 
         function handleDragMove(e) {
             if (!isDragging || !activeTileElement) return;
-            
             e.preventDefault();
 
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -265,53 +295,40 @@
             let newLeft = clientX - offsetX;
             let newTop = clientY - offsetY;
 
-            // --- BOUNDARY CONSTRAINT LOGIC ---
+            // Boundary Constraint
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
             const elementW = activeTileElement.offsetWidth;
             const elementH = activeTileElement.offsetHeight;
-
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
-            // --- END BOUNDARY LOGIC ---
 
             activeTileElement.style.left = `${newLeft}px`;
             activeTileElement.style.top = `${newTop}px`;
         }
 
-        function finalizeMove() {
-            if (!activeTileId) return;
+        function handleDragEnd() {
+            if (!isDragging || !activeTileId) return;
             
             const tileData = allTiles.get(activeTileId);
 
-            if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) {
-                return;
-            }
-            
-            const newMovesMade = tileData.movesMade + 1;
-            let newRestrictionEndTime = tileData.moveRestrictionEndTime;
-            
-            if (newMovesMade >= MAX_DRAG_SESSIONS) {
-                newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
-            }
+            // Check if a move was actually performed and limits are not met
+            if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
+                
+                const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
+                let newRestrictionEndTime = tileData.moveRestrictionEndTime;
+                
+                if (newMovesMade >= MAX_DRAG_SESSIONS) {
+                    newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
+                }
 
-            // Save the update to Firestore
-            if (userId && db) { 
                 saveTile({
-                    creatorId: activeTileId, // Use the active tile ID for the doc reference
+                    creatorId: activeTileId, 
                     movesMade: newMovesMade,
                     moveRestrictionEndTime: newRestrictionEndTime,
                     left: activeTileElement.style.left,
                     top: activeTileElement.style.top,
                 });
-            } 
-        }
-
-        function handleDragEnd() {
-            if (!isDragging) return;
-            
-            if (activeTileElement) {
-                finalizeMove();
             }
             
             isDragging = false;
@@ -327,28 +344,13 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Rendering Functions ---
+        // --- Tile Rendering ---
         
-        function hideInputPrompt() {
-            const promptModal = document.getElementById('input-prompt-modal');
-            if (promptModal) promptModal.style.display = 'none';
-        }
-        
-        function showInputPrompt() {
-             const promptModal = document.getElementById('input-prompt-modal');
-             if (promptModal) promptModal.style.display = 'flex';
-        }
-        
-        /**
-         * Renders a single tile DOM element.
-         * @param {string} tileId The Firestore document ID (which is the creatorId).
-         * @param {Object} tileData The tile object.
-         */
         function renderSingleTile(tileId, tileData) {
             const domId = `tile-${tileId}`;
             let tileElement = document.getElementById(domId);
+            let cooldownIntervalId = parseInt(tileElement?.dataset?.cooldownInterval || '0');
 
-            // 1. Creation or Update of Element
             if (!tileElement) {
                 tileElement = document.createElement('div');
                 tileElement.id = domId;
@@ -357,36 +359,34 @@
                 canvasContainer.appendChild(tileElement);
             }
             
-            // 2. Cooldown and Restriction Logic
-            if (cooldownIntervalId) {
-                clearInterval(cooldownIntervalId);
-                cooldownIntervalId = null;
-            }
-            
+            // Cooldown Logic
+            const isMyTile = tileId === userId;
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
-            if (isCooldownExpired) {
-                if (tileData.moveRestrictionEndTime > 0 && tileId === userId) { 
-                    // Only reset if it is the current user's tile and we are connected
-                    saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
-                }
+            if (isCooldownExpired && isMyTile) {
+                // If cooldown expired and it's our tile, reset moves in DB
+                saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
                 movesLeft = MAX_DRAG_SESSIONS;
             }
             
-            const isRestricted = tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
-            let movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
-
-            // 3. Apply Styling and Content
+            const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
+            
+            // Styling and Content
             const colorClass = tileData.color;
             tileElement.className = `w-48 h-48 sm:w-56 sm:h-56 shadow-xl rounded-lg ${colorClass}`;
             tileElement.classList.add('draggable-tile');
 
             const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
             const textColor = isLightColor ? 'text-gray-800' : 'text-white';
-            const isMyTile = tileId === userId;
-            const ownershipLabel = isMyTile ? 'Your Tile' : `Shared by ${tileData.name}`;
+            const ownershipLabel = isMyTile ? 'Your Tile (Drag Me!)' : `Shared by ${tileData.name}`;
             
+            // Moves Display Text
+            let movesDisplayText = 'Shared Piece';
+            if (isMyTile) {
+                 movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft} of ${MAX_DRAG_SESSIONS}`;
+            }
+
             tileElement.innerHTML = `
                 <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none">
                     <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none">
@@ -396,7 +396,7 @@
                         ${ownershipLabel}
                     </p>
                     <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100" id="moves-display-text-${tileId}">
-                        ${isMyTile ? movesDisplayText : 'Shared Piece'}
+                        ${movesDisplayText}
                     </p>
                     <p class="text-xs font-mono text-center mt-1 ${textColor} opacity-60 break-all text-ellipsis overflow-hidden">
                         ID: ${tileId.substring(0, 8)}...
@@ -404,132 +404,87 @@
                 </div>
             `;
             
-            // 4. Interaction/Restriction Handlers
-            if (isMyTile) {
-                if (isRestricted) {
-                    const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
-                    
-                    const updateRestrictionDisplay = () => {
-                        const now = Date.now();
-                        const timeRemaining = tileData.moveRestrictionEndTime - now;
-
-                        if (timeRemaining <= 0) {
-                            clearInterval(cooldownIntervalId);
-                            // This will trigger a Firestore update via the snapshot listener
-                            // which will then re-render the tile with moves available.
-                            return; 
-                        }
-
-                        const secondsTotal = Math.ceil(timeRemaining / 1000);
-                        const minutes = Math.floor(secondsTotal / 60);
-                        const seconds = secondsTotal % 60;
-                        
-                        const displayTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
-                        
-                        if(movesDisplayElement) {
-                            movesDisplayElement.textContent = `COOLDOWN: ${displayTime}`;
-                        }
-                    };
-                    
-                    updateRestrictionDisplay(); 
-                    cooldownIntervalId = setInterval(updateRestrictionDisplay, 1000);
-                    
-                    // Disable handlers
-                    tileElement.onmousedown = null;
-                    tileElement.ontouchstart = null;
-                    tileElement.style.cursor = 'default';
-                    tileElement.classList.add('opacity-75', 'cursor-not-allowed'); 
-                } else {
-                    // Enable handlers
-                    tileElement.onmousedown = handleDragStart;
-                    tileElement.ontouchstart = handleDragStart;
-                    tileElement.style.cursor = 'grab';
-                    tileElement.classList.remove('opacity-75', 'cursor-not-allowed');
-                }
+            // Interaction/Restriction Handlers
+            if (isMyTile && !isRestricted) {
+                // Enable handlers
+                tileElement.onmousedown = handleDragStart;
+                tileElement.ontouchstart = handleDragStart;
+                tileElement.style.cursor = 'grab';
+                tileElement.classList.remove('opacity-75', 'cursor-not-allowed');
             } else {
-                 // Other users cannot drag this tile
+                 // Disable handlers for other users' tiles or our restricted tile
                  tileElement.onmousedown = null;
                  tileElement.ontouchstart = null;
                  tileElement.style.cursor = 'default';
-                 tileElement.classList.add('opacity-90');
+                 if (isMyTile && isRestricted) tileElement.classList.add('opacity-75', 'cursor-not-allowed');
+                 else tileElement.classList.add('opacity-90');
+            }
+            
+            // Cooldown Timer Update
+            if (isMyTile && isRestricted) {
+                // Clear any existing interval for this tile
+                if (cooldownIntervalId) clearInterval(cooldownIntervalId);
+                
+                const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
+                
+                const updateRestrictionDisplay = () => {
+                    const now = Date.now();
+                    const timeRemaining = tileData.moveRestrictionEndTime - now;
+
+                    if (timeRemaining <= 0) {
+                        clearInterval(parseInt(tileElement.dataset.cooldownInterval));
+                        // The next snapshot update will automatically reset the moves via the saveTile call above
+                        return; 
+                    }
+
+                    const secondsTotal = Math.ceil(timeRemaining / 1000);
+                    const minutes = Math.floor(secondsTotal / 60);
+                    const seconds = secondsTotal % 60;
+                    const displayTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
+                    
+                    if(movesDisplayElement) movesDisplayElement.textContent = `COOLDOWN: ${displayTime}`;
+                };
+                
+                updateRestrictionDisplay(); 
+                const newIntervalId = setInterval(updateRestrictionDisplay, 1000);
+                tileElement.dataset.cooldownInterval = newIntervalId; // Store interval ID on the element
+            } else if (cooldownIntervalId) {
+                 clearInterval(cooldownIntervalId); // Clear if no longer restricted
+                 tileElement.dataset.cooldownInterval = '0';
             }
 
-            // 5. Apply Position
+            // Apply Position
             tileElement.style.left = tileData.left; 
             tileElement.style.top = tileData.top; 
         }
 
-        /**
-         * Renders all tiles currently in the 'allTiles' map.
-         */
         function renderAllTiles() {
-             // Find all existing tiles on the canvas
             const existingTileIds = new Set();
             canvasContainer.querySelectorAll('.draggable-tile').forEach(el => {
                 existingTileIds.add(el.dataset.tileId);
             });
             
-            // Render/Update all tiles from the map
             for (const [id, data] of allTiles.entries()) {
                 renderSingleTile(id, data);
-                existingTileIds.delete(id); // Remove from the set of existing IDs
+                existingTileIds.delete(id); 
             }
             
-            // Remove tiles that are no longer in the data map (e.g., deleted by other users)
             existingTileIds.forEach(idToRemove => {
                 const element = document.getElementById(`tile-${idToRemove}`);
-                if (element) element.remove();
+                if (element) {
+                    // Also clear any lingering cooldown interval
+                    const intervalId = parseInt(element.dataset.cooldownInterval || '0');
+                    if(intervalId) clearInterval(intervalId);
+                    element.remove();
+                }
             });
         }
 
 
-        /**
-         * Renders the name and color input prompt screen as a modal.
-         */
-        function renderInputPrompt() {
-            promptArea.innerHTML = `
-                <div id="input-prompt-modal" class="prompt-modal-overlay">
-                    <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all">
-                        <div class="space-y-4">
-                            <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
-                            <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
-                                Status: UI loaded. Initializing Firebase...
-                            </p>
-
-                            <input
-                                type="text"
-                                id="name-input"
-                                placeholder="Enter your display name (max 15 chars)"
-                                class="w-full px-3 py-2 border border-gray-400 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                                autocomplete="off"
-                                maxlength="15"
-                            >
-                            
-                            <div class="flex flex-col space-y-2">
-                                <p class="text-sm font-medium text-gray-600 text-center">Choose a Color</p>
-                                <div id="color-picker" class="flex justify-between items-center px-2">
-                                    <!-- Swatches rendered via JS -->
-                                </div>
-                            </div>
-
-                            <button
-                                id="submit-button"
-                                class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
-                                disabled
-                            >
-                                Create Tile
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            // --- Attach Event Listeners to Modal Elements ---
-            const input = document.getElementById('name-input');
-            const button = document.getElementById('submit-button');
+        // --- Event Binding for the Static Prompt Modal ---
+        function setupPromptHandlers() {
+            // Render the color swatches first
             const colorPicker = document.getElementById('color-picker');
-            
-            // 1. Render Swatches
             const colorSwatches = Object.entries(COLORS).map(([name, colorClass]) => `
                 <button type="button" data-color="${colorClass}" 
                     class="color-swatch w-7 h-7 rounded-full shadow-md hover:ring-4 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out" 
@@ -538,6 +493,9 @@
             `).join('');
             colorPicker.innerHTML = colorSwatches;
 
+            const input = document.getElementById('name-input');
+            const button = document.getElementById('submit-button');
+            
             // Helper to apply the ring indicator
             const applyRing = (colorClass) => {
                 document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('ring-gray-900', 'ring-2'));
@@ -549,7 +507,7 @@
             
             applyRing(selectedColor);
 
-            // 2. Color Picker Listener
+            // Color Picker Listener
             colorPicker.addEventListener('click', (e) => {
                 const swatch = e.target.closest('.color-swatch');
                 if (swatch) {
@@ -558,7 +516,7 @@
                 }
             });
 
-            // 3. Input Validation Listener
+            // Input Validation Listener
             input.addEventListener('input', () => {
                 const name = input.value.trim();
                 button.disabled = name.length === 0; 
@@ -566,15 +524,15 @@
             input.dispatchEvent(new Event('input')); 
 
 
-            // 4. Creation Logic
+            // Creation Logic
             const createNewTile = () => {
                 const name = input.value.trim();
-                if (!name || name.length === 0 || !userId) {
-                    console.error("Cannot create tile: Name or User ID missing.");
-                    return;
-                }
+                if (!name || name.length === 0) return;
                 
-                hideInputPrompt(); // Hide the prompt immediately
+                // Use a temporary ID if Firebase auth hasn't completed yet
+                const tileId = userId || crypto.randomUUID();
+
+                hideInputPrompt();
                 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
                     year: 'numeric', 
@@ -587,7 +545,7 @@
                 const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
                 
                 const newTileData = {
-                    creatorId: userId, // The unique ID of the tile creator
+                    creatorId: tileId, // The unique ID of the tile creator
                     name: name,
                     color: selectedColor,
                     left: initialLeft,
@@ -597,7 +555,7 @@
                     moveRestrictionEndTime: 0,
                 };
 
-                // Save to the public collection using userId as the document ID
+                // Save to the public collection
                 saveTile(newTileData);
             };
 
@@ -608,20 +566,20 @@
                     createNewTile();
                 }
             });
-            input.focus();
         }
-        
+
+
         // --- Core Execution Flow ---
         
-        // 1. Immediately render the UI prompt synchronously.
-        // This is the absolute guarantee that something appears immediately.
-        renderInputPrompt();
-        
-        // 2. Defer ALL Firebase Initialization to ensure the browser has painted the UI first.
+        // 1. Setup prompt handlers immediately for responsiveness
+        setupPromptHandlers();
+
+        // 2. Defer ALL Firebase Initialization to guarantee UI is painted first.
         window.onload = function () {
             // Ensure responsiveness
             window.addEventListener('resize', renderAllTiles); 
             
+            // Push heavy lifting to the end of the event queue
             setTimeout(setupAuthAndDataDeferred, 0); 
         };
         
