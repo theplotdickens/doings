@@ -191,6 +191,42 @@
             }
         }
         
+        /**
+         * Checks if the proposed position of the target tile overlaps with any other tile.
+         * @param {string} targetId - The ID of the tile being moved.
+         * @param {number} newLeft - The proposed new 'left' position in pixels.
+         * @param {number} newTop - The proposed new 'top' position in pixels.
+         * @returns {boolean} - True if a collision is detected, false otherwise.
+         */
+        function checkCollision(targetId, newLeft, newTop) {
+            const size = window.getCurrentTileSize();
+            const targetRight = newLeft + size;
+            const targetBottom = newTop + size;
+
+            for (const [id, data] of allTiles.entries()) {
+                if (id === targetId) continue; // Don't check against self
+
+                const otherElement = document.getElementById(`tile-${id}`);
+                if (!otherElement) continue;
+
+                const otherRect = otherElement.getBoundingClientRect();
+                
+                // Use the size directly from the current view state of the element
+                const otherLeft = otherRect.left;
+                const otherTop = otherRect.top;
+                const otherSize = otherElement.offsetWidth; // This should be TILE_SIZE_SM or TILE_SIZE_LG
+
+                // Collision logic: A and B overlap if they don't separate on any axis
+                const overlapsX = newLeft < (otherLeft + otherSize) && targetRight > otherLeft;
+                const overlapsY = newTop < (otherTop + otherSize) && targetBottom > otherTop;
+
+                if (overlapsX && overlapsY) {
+                    return true; // Collision detected
+                }
+            }
+            return false; // No collision
+        }
+        
         // --- UI Control ---
         
         function hideModal(modal) {
@@ -323,8 +359,15 @@
             const viewportH = window.innerHeight;
             const elementW = activeTileElement.offsetWidth;
             const elementH = activeTileElement.offsetHeight;
+            
+            // Boundary check
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
+            
+            // NEW: Collision check before applying style
+            if (checkCollision(activeTileId, newLeft, newTop)) {
+                return; // Prevent the move if collision occurs
+            }
 
             activeTileElement.style.left = `${newLeft}px`;
             activeTileElement.style.top = `${newTop}px`;
@@ -406,8 +449,8 @@
             const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
             const textColor = isLightColor ? 'text-gray-800' : 'text-white';
             
-            // --- RESTORED: Full status text and ID ---
-            let statusText = isMyTile ? 'Your Tile (Drag Me!)' : `Shared by ${tileData.name}`;
+            // --- UPDATED: Full status text and ID (removed 'Your Tile (Drag Me!)') ---
+            let statusText = isMyTile ? '' : `Shared by ${tileData.name}`;
 
             let movesDisplayText = '';
             if (isMyTile) {
@@ -415,7 +458,7 @@
             } else {
                  movesDisplayText = 'Shared Piece';
             }
-            // --- End RESTORED ---
+            // --- End UPDATED ---
 
             tileElement.innerHTML = `
                 <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none">
