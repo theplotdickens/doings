@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shared Draggable Tile Playground</title>
+    <title>Shared Draggable Image Tiles</title>
     <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -25,14 +25,18 @@
             position: absolute;
             user-select: none;
             cursor: grab;
-            transition: box-shadow 0.3s ease, opacity 0.3s ease;
+            transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
+            background-size: cover;
+            background-position: center;
+            background-color: #3b82f6; /* Fallback blue */
         }
         /* Visual feedback for when the tile is actively being dragged */
         .draggable-tile:active, .draggable-tile.active-drag-state {
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
             z-index: 20; 
+            transform: scale(1.01); /* Slight lift */
         }
         .prompt-modal-overlay {
             position: absolute;
@@ -43,11 +47,21 @@
             align-items: center;
             z-index: 30;
         }
-        /* Custom class for selected color, using a highly visible ring */
-        .color-selected {
-            outline: 3px solid #3b82f6; /* Blue ring */
-            outline-offset: 3px; 
-            box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+        /* Custom class for image preview */
+        .image-preview {
+            background-size: cover;
+            background-position: center;
+        }
+        /* The custom size classes for 4:5 aspect ratio */
+        .size-rect-sm {
+            width: 192px; /* w-48 equivalent */
+            height: 240px; /* 192 * 5/4 */
+        }
+        @media (min-width: 640px) {
+            .size-rect-lg {
+                width: 400px; 
+                height: 500px;
+            }
         }
     </style>
 </head>
@@ -58,9 +72,9 @@
 
     <!-- INPUT PROMPT MODAL: Visible until the user creates a tile -->
     <div id="input-prompt-modal" class="prompt-modal-overlay">
-        <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
+        <div class="w-full max-w-sm mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
-                <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
+                <p class="text-xl font-bold text-gray-800 text-center">Create Your Image Tile</p>
                 <!-- Status text for Firebase initialization -->
                 <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
                     Status: UI loaded. Initializing services...
@@ -75,10 +89,13 @@
                     maxlength="15"
                 >
                 
+                <!-- NEW: Image Upload Section -->
                 <div class="flex flex-col space-y-2">
-                    <p class="text-sm font-medium text-gray-600 text-center">Choose a Color</p>
-                    <div id="color-picker" class="flex justify-between items-center px-2">
-                        <!-- Swatches rendered here by JS -->
+                    <p class="text-sm font-medium text-gray-600">Upload Your Background Image (PNG/JPG)</p>
+                    <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                    
+                    <div id="image-preview" class="w-16 h-20 border-2 border-dashed border-gray-300 rounded-lg mx-auto image-preview mt-2 bg-gray-100 flex items-center justify-center text-xs text-gray-500">
+                        Preview
                     </div>
                 </div>
 
@@ -93,35 +110,22 @@
         </div>
     </div>
     
-    <!-- Removed Edit Tile Modal HTML -->
-
-
     <script type="module">
         // --- Firebase Imports ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================================================
         // ⭐ FIREBASE CONFIGURATION INJECTED ⭐
         // =========================================================================================================
-        const FIREBASE_CONFIG_OBJECT = {
-            apiKey: "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM",
-            authDomain: "doings-7717f.firebaseapp.com",
-            projectId: "doings-7717f",
-            storageBucket: "doings-7717f.firebasestorage.app",
-            messagingSenderId: "566659301557",
-            appId: "1:566659301557:web:b0ff5e651eac824b1bbefc",
-            measurementId: "G-YXYE1G6R27"
-        };
-        const FIREBASE_APP_ID = FIREBASE_CONFIG_OBJECT.projectId;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // =========================================================================================================
 
         
         // --- Global Firebase State Variables ---
-        const appId = FIREBASE_APP_ID;
-        const firebaseConfig = FIREBASE_CONFIG_OBJECT; 
-
         let app = null;
         let db = null;
         let auth = null;
@@ -133,22 +137,11 @@
         const userStatusText = document.getElementById('user-status-text');
         
         let allTiles = new Map(); 
+        let uploadedBase64Image = null; // Stores the image data for the new tile
         
         // Drag limit constants
         const MAX_DRAG_SESSIONS = 6;
         const COOLDOWN_DURATION_MS = 60000;
-        
-        const COLORS = {
-            'Red': 'bg-red-500',
-            'Orange': 'bg-orange-500',
-            'Yellow': 'bg-yellow-400',
-            'Green': 'bg-green-500',
-            'Blue': 'bg-blue-600',
-            'Indigo': 'bg-indigo-600',
-            'Violet': 'bg-purple-600',
-            'Black': 'bg-black'
-        };
-        let selectedColor = COLORS['Red']; // Default color for creation
         
         // Drag State Variables
         let isDragging = false;
@@ -157,17 +150,26 @@
         let offsetX = 0;
         let offsetY = 0;
         
-        // Centralized Tailwind classes for easier maintenance
-        const TILE_SIZE_SM = 192; // corresponds to w-48 h-48
-        const TILE_SIZE_LG = 224; // corresponds to sm:w-56 sm:h-56
-        const TILE_BASE_CLASSES = "shadow-xl rounded-lg draggable-tile"; 
-        const TILE_SIZE_CLASSES = "w-48 h-48 sm:w-56 sm:h-56";
+        // NEW SIZE CONSTANTS (4:5 Portrait Ratio, max 400x500)
+        const TILE_WIDTH_SM = 192; // w-48 equivalent
+        const TILE_HEIGHT_SM = 240; // 192 * 5/4 
+        const TILE_WIDTH_LG = 400; 
+        const TILE_HEIGHT_LG = 500; 
+        
+        const TILE_BASE_CLASSES = "shadow-2xl rounded-xl draggable-tile"; 
+        const TILE_SIZE_CLASSES = "size-rect-sm sm:size-rect-lg"; // Uses custom CSS classes for precise size control
 
         // --- Utility Functions ---
 
-        window.getCurrentTileSize = function() {
-            return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
-        }
+        /**
+         * Returns the current tile dimensions based on viewport size.
+         */
+        window.getCurrentTileDimensions = function() {
+            if (window.innerWidth >= 640) { // Tailwind 'sm' breakpoint
+                return { width: TILE_WIDTH_LG, height: TILE_HEIGHT_LG };
+            }
+            return { width: TILE_WIDTH_SM, height: TILE_HEIGHT_SM };
+        };
         
         function getTileDocRef(tileId) {
             if (!db) return null;
@@ -192,16 +194,35 @@
         }
         
         /**
+         * Converts a File object to a Base64 string.
+         * @param {File} file - The image file to convert.
+         * @returns {Promise<string>} - The Base64 data URL.
+         */
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
+         * Logic is updated to use width and height independently for rectangles.
          * @param {string} targetId - The ID of the tile being moved.
          * @param {number} newLeft - The proposed new 'left' position in pixels.
          * @param {number} newTop - The proposed new 'top' position in pixels.
          * @returns {boolean} - True if a collision is detected, false otherwise.
          */
         function checkCollision(targetId, newLeft, newTop) {
-            const size = window.getCurrentTileSize();
-            const targetRight = newLeft + size;
-            const targetBottom = newTop + size;
+            const targetElement = document.getElementById(`tile-${targetId}`);
+            if (!targetElement) return false;
+
+            const targetW = targetElement.offsetWidth;
+            const targetH = targetElement.offsetHeight;
+            const targetRight = newLeft + targetW;
+            const targetBottom = newTop + targetH;
 
             for (const [id, data] of allTiles.entries()) {
                 if (id === targetId) continue; // Don't check against self
@@ -209,16 +230,17 @@
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
-                const otherRect = otherElement.getBoundingClientRect();
+                // Use current live dimensions for the "other" tile
+                const otherW = otherElement.offsetWidth;
+                const otherH = otherElement.offsetHeight;
                 
-                // Use the size directly from the current view state of the element
+                const otherRect = otherElement.getBoundingClientRect();
                 const otherLeft = otherRect.left;
                 const otherTop = otherRect.top;
-                const otherSize = otherElement.offsetWidth; // This should be TILE_SIZE_SM or TILE_SIZE_LG
 
                 // Collision logic: A and B overlap if they don't separate on any axis
-                const overlapsX = newLeft < (otherLeft + otherSize) && targetRight > otherLeft;
-                const overlapsY = newTop < (otherTop + otherSize) && targetBottom > otherTop;
+                const overlapsX = newLeft < (otherLeft + otherW) && targetRight > otherLeft;
+                const overlapsY = newTop < (otherTop + otherH) && targetBottom > otherTop;
 
                 if (overlapsX && overlapsY) {
                     return true; // Collision detected
@@ -265,9 +287,8 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                if (userId && allTiles.has(userId)) {
-                     hideModal(createPromptModal);
-                } else {
+                // If there's an error, assume the user might not have a tile and show the modal
+                if (userId && !allTiles.has(userId)) {
                     showModal(createPromptModal);
                 }
             });
@@ -277,25 +298,19 @@
          * Initializes Firebase and starts Auth immediately on load.
          */
         function setupAuthAndData() {
-            
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
-                    // Initialize Firebase services immediately
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
-                    // Set up the Auth State listener first
-                    onAuthStateChanged(auth, (user) => {
+                    onAuthStateChanged(auth, async (user) => {
                         if (user) {
                             userId = user.uid;
-                            startDataListener(); // Start listening for public tiles
-                            
-                            // RESTORED: Show the user ID in the status text
+                            startDataListener(); 
                             if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
-                            
                         } else {
                             userId = null; 
                             console.warn("User signed out or auth failed.");
@@ -304,9 +319,15 @@
                         }
                     });
                     
-                    // Attempt anonymous sign-in
-                    signInAnonymously(auth)
-                        .catch(error => console.error("Anonymous Sign-in Failed:", error));
+                    if (initialAuthToken) {
+                        // Use provided custom token
+                        await signInWithCustomToken(auth, initialAuthToken)
+                             .catch(error => console.error("Custom Sign-in Failed:", error));
+                    } else {
+                        // Fallback to anonymous sign-in
+                        await signInAnonymously(auth)
+                            .catch(error => console.error("Anonymous Sign-in Failed:", error));
+                    }
 
 
                 } catch (error) {
@@ -324,17 +345,21 @@
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
-            // Client-side check: ensure the tile belongs to the user AND is not restricted
+            // Client-side check
             if (tileData.creatorId !== userId || (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now())) {
                 return;
             }
             
+            // CRITICAL MOBILE FIX: Prevent dragging on multi-touch gestures (like zooming on mobile)
+            if (e.touches && e.touches.length > 1) {
+                return;
+            }
+
             e.preventDefault(); 
             isDragging = true;
             activeTileElement = tileElement; 
             activeTileId = tileId;
             
-            // Apply active state class for consistent visuals
             activeTileElement.classList.add('active-drag-state');
 
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -364,7 +389,7 @@
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
             
-            // NEW: Collision check before applying style
+            // Collision check before applying style
             if (checkCollision(activeTileId, newLeft, newTop)) {
                 return; // Prevent the move if collision occurs
             }
@@ -381,7 +406,7 @@
             // Remove active state class
             if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
             
-            // Only save if a move actually occurred
+            // Only save if a move is authorized
             if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
                 
                 const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
@@ -415,9 +440,6 @@
 
         // --- Tile Rendering ---
         
-        // openEditModal functionality removed
-        // Removed double-click/tap logic from this function.
-
         window.renderSingleTile = function(tileId, tileData) {
             const domId = `tile-${tileId}`;
             let tileElement = document.getElementById(domId);
@@ -442,14 +464,22 @@
             
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
-            const colorClass = tileData.color;
-            // Use centralized class constants and merge.
-            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} ${colorClass}`;
+            // Use centralized class constants for size
+            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`;
 
-            const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
-            const textColor = isLightColor ? 'text-gray-800' : 'text-white';
+            // Set background image style
+            if (tileData.base64Image) {
+                tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
+                tileElement.style.backgroundColor = 'transparent'; // Ensure background color doesn't show over image
+            } else {
+                // Fallback style if image data is missing (use a placeholder solid color)
+                tileElement.style.backgroundImage = 'none';
+                tileElement.style.backgroundColor = '#4B5563'; // Dark gray fallback
+            }
+
+            const textColor = 'text-white'; // Always use white text over the image/fallback color
             
-            // --- UPDATED: Full status text and ID (removed 'Your Tile (Drag Me!)') ---
+            // Text logic
             let statusText = isMyTile ? '' : `Shared by ${tileData.name}`;
 
             let movesDisplayText = '';
@@ -458,11 +488,10 @@
             } else {
                  movesDisplayText = 'Shared Piece';
             }
-            // --- End UPDATED ---
 
             tileElement.innerHTML = `
-                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none">
-                    <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none">
+                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none bg-black bg-opacity-40 rounded-xl">
+                    <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none truncate max-w-full">
                         ${tileData.name}
                     </h2>
                     <p class="text-xs italic font-normal ${textColor} opacity-80 mt-2 select-none">
@@ -478,18 +507,11 @@
             `;
             
             if (isMyTile && !isRestricted) {
-                // Drag Handlers are the only interaction for now
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
                 tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
-                
-                // Remove all edit-related touch/click handlers
-                tileElement.ondblclick = null;
-                tileElement.ontouchend = null;
-
             } else {
-                // Non-draggable tiles
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
@@ -565,61 +587,43 @@
 
         // --- Event Binding for Modals ---
         
-        function applyRing(colorClass, containerId) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            
-            container.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('color-selected'));
-            const currentSwatch = container.querySelector(`[data-color="${colorClass}"]`);
-            if (currentSwatch) {
-                currentSwatch.classList.add('color-selected');
-            }
-        }
-
-        function renderColorSwatches(containerId, initialColor) {
-            const container = document.getElementById(containerId);
-            const button = document.getElementById('submit-button');
-            if (!container) return;
-
-            // Clear previous swatches if any
-            container.innerHTML = ''; 
-
-            Object.entries(COLORS).forEach(([name, colorClass]) => {
-                const swatch = document.createElement('button');
-                swatch.type = 'button';
-                swatch.dataset.color = colorClass;
-                swatch.title = name;
-                swatch.className = `color-swatch w-8 h-8 rounded-full shadow-md hover:ring-2 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
-                
-                const selectColorHandler = (e) => {
-                    e.preventDefault(); 
-                    selectedColor = colorClass;
-                    applyRing(colorClass, containerId);
-                    if (button) button.disabled = document.getElementById('name-input').value.trim().length === 0;
-                };
-
-                swatch.addEventListener('mousedown', selectColorHandler);
-                swatch.addEventListener('touchstart', selectColorHandler);
-
-                container.appendChild(swatch);
-            });
-            
-            applyRing(initialColor, containerId);
-        }
-
         function setupPromptHandlers() {
-            // --- Create Modal Handlers ---
             const createNameInput = document.getElementById('name-input');
+            const imageUploadInput = document.getElementById('image-upload');
+            const imagePreviewElement = document.getElementById('image-preview');
             const createButton = document.getElementById('submit-button');
             
-            // Initial color swatch rendering for the creation modal
-            renderColorSwatches('color-picker', selectedColor);
-
             const checkCreateInput = () => {
-                const name = createNameInput.value.trim();
-                createButton.disabled = name.length === 0;
+                // FIX: Ensures button is enabled only when both name and image data are present.
+                const nameValid = createNameInput.value.trim().length > 0;
+                const imageValid = uploadedBase64Image !== null;
+                createButton.disabled = !(nameValid && imageValid);
             };
-            
+
+            // Image file reader for preview and storage
+            imageUploadInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) {
+                    uploadedBase64Image = null;
+                    imagePreviewElement.style.backgroundImage = 'none';
+                    imagePreviewElement.textContent = 'Preview';
+                    checkCreateInput();
+                    return;
+                }
+                
+                try {
+                    uploadedBase64Image = await fileToBase64(file);
+                    imagePreviewElement.style.backgroundImage = `url('${uploadedBase64Image}')`;
+                    imagePreviewElement.textContent = '';
+                } catch (error) {
+                    console.error("Error converting file to base64:", error);
+                    uploadedBase64Image = null;
+                    imagePreviewElement.style.backgroundImage = 'none';
+                    imagePreviewElement.textContent = 'Error';
+                }
+                checkCreateInput();
+            });
+
             createNameInput.addEventListener('keyup', checkCreateInput); 
             createNameInput.addEventListener('input', checkCreateInput); 
             checkCreateInput();
@@ -627,9 +631,9 @@
 
             const createNewTile = () => {
                 const name = createNameInput.value.trim();
-                if (!name || name.length === 0 || !userId) {
+                // Check again before final submission
+                if (!name || !userId || !uploadedBase64Image) {
                      if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
-                     showModal(createPromptModal); 
                      return;
                 }
                 
@@ -641,14 +645,14 @@
                     day: 'numeric' 
                 });
                 
-                const size = window.getCurrentTileSize();
-                const initialLeft = `${(window.innerWidth / 2) - (size / 2)}px`;
-                const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
+                const { width, height } = window.getCurrentTileDimensions(); // Get current dimensions
+                const initialLeft = `${(window.innerWidth / 2) - (width / 2)}px`;
+                const initialTop = `${(window.innerHeight / 2) - (height / 2)}px`;
                 
                 const newTileData = {
                     creatorId: userId, 
                     name: name,
-                    color: selectedColor,
+                    base64Image: uploadedBase64Image, // Store image data instead of color
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
@@ -664,8 +668,6 @@
             createNameInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter' && !createButton.disabled) createNewTile();
             });
-
-            // Removed Edit Modal Handlers
         }
 
 
