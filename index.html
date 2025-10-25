@@ -62,7 +62,7 @@
             position: absolute;
             width: 24px; 
             height: 24px;
-            /* UPDATED: Using the raw link for the requested pin%20png.png file */
+            /* Using the raw link for the requested pin%20png.png file */
             background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/pin%20png.png');
             background-size: cover;
             background-repeat: no-repeat;
@@ -76,8 +76,7 @@
         .pushpin.bottom-right { bottom: -12px; right: -12px; }
         /* --- END PUSHPIN STYLING --- */
 
-        /* --- CONSISTENT SIZE DEFINITION --- */
-        /* Applying the mobile size to ALL viewports for consistent experience */
+        /* --- CONSISTENT SIZE DEFINITION (Now universal for all devices) --- */
         .size-rect-sm {
             width: 192px; 
             height: 240px; 
@@ -329,14 +328,21 @@
         
         /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
-         * targetId is only used to exclude the tile being dragged from the check.
+         * The collision check is now padded to ensure the pushpins do not overlap.
          */
         function checkCollision(targetId, newLeft, newTop) {
             // Use the single fixed size
             const { width: targetW, height: targetH } = { width: TILE_WIDTH, height: TILE_HEIGHT }; 
             
-            const targetRight = newLeft + targetW;
-            const targetBottom = newTop + targetH;
+            // Define the padding necessary to include the pushpins in the collision box. 
+            // The pins extend 12px out from the corner.
+            const PIN_OFFSET = 12; 
+
+            // Calculate the padded bounding box for the target tile (including pins)
+            const paddedNewLeft = newLeft - PIN_OFFSET;
+            const paddedNewTop = newTop - PIN_OFFSET;
+            const paddedTargetRight = newLeft + targetW + PIN_OFFSET;
+            const paddedTargetBottom = newTop + targetH + PIN_OFFSET;
 
             for (const [id, data] of allTiles.entries()) {
                 if (id === targetId) continue; 
@@ -344,11 +350,11 @@
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
-                // Since all tiles now have the same fixed size, we can use the fixed TILE_WIDTH/HEIGHT
+                // Since all tiles now have the same fixed size
                 const otherW = TILE_WIDTH; 
                 const otherH = TILE_HEIGHT;
                 
-                // Get position from the element's style property if available, otherwise fall back to data
+                // Get position from the element's style property
                 let otherLeft = parseFloat(otherElement.style.left);
                 let otherTop = parseFloat(otherElement.style.top);
                 
@@ -356,9 +362,17 @@
                 if (isNaN(otherTop) && data.top) otherTop = parseFloat(data.top);
 
                 if (isNaN(otherLeft) || isNaN(otherTop)) continue; 
+                
+                // Calculate the padded bounding box for the other tile (including pins)
+                const paddedOtherLeft = otherLeft - PIN_OFFSET;
+                const paddedOtherTop = otherTop - PIN_OFFSET;
+                const paddedOtherRight = otherLeft + otherW + PIN_OFFSET;
+                const paddedOtherBottom = otherTop + otherH + PIN_OFFSET;
 
-                const overlapsX = newLeft < (otherLeft + otherW) && targetRight > otherLeft;
-                const overlapsY = newTop < (otherTop + otherH) && targetBottom > otherTop;
+
+                // Check for overlap using padded bounds
+                const overlapsX = paddedNewLeft < paddedOtherRight && paddedTargetRight > paddedOtherLeft;
+                const overlapsY = paddedNewTop < paddedOtherBottom && paddedTargetBottom > paddedOtherTop;
 
                 if (overlapsX && overlapsY) {
                     return true; 
@@ -373,10 +387,19 @@
         function findSafeInitialPosition(tileWidth, tileHeight) {
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
+            
+            // Use padded dimensions for positioning check to respect the pins
+            const paddedTileWidth = tileWidth + 24; 
+            const paddedTileHeight = tileHeight + 24; 
 
             // Calculate exact center position
             let initialLeft = Math.round((viewportW / 2) - (tileWidth / 2));
             let initialTop = Math.round((viewportH / 2) - (tileHeight / 2));
+            
+            // Ensure initial position isn't too close to screen edges (respecting pins)
+            initialLeft = Math.max(12, Math.min(initialLeft, viewportW - tileWidth - 12));
+            initialTop = Math.max(12, Math.min(initialTop, viewportH - tileHeight - 12));
+
 
             // Start simple non-overlapping check at center
             if (!checkCollision(null, initialLeft, initialTop)) {
@@ -398,9 +421,10 @@
                     let checkLeft = initialLeft + x;
                     let checkTop = initialTop + y;
                     
-                    if (checkLeft >= 0 && checkTop >= 0 && 
-                        checkLeft + tileWidth <= viewportW && 
-                        checkTop + tileHeight <= viewportH) {
+                    // Boundary check using padded dimensions
+                    if (checkLeft >= 12 && checkTop >= 12 && 
+                        checkLeft + tileWidth <= viewportW - 12 && 
+                        checkTop + tileHeight <= viewportH - 12) {
                         if (!checkCollision(null, checkLeft, checkTop)) {
                             return { left: `${checkLeft}px`, top: `${checkTop}px` };
                         }
@@ -413,9 +437,9 @@
                     let checkLeft = initialLeft + x;
                     let checkTop = initialTop + y;
                     
-                    if (checkLeft >= 0 && checkTop >= 0 && 
-                        checkLeft + tileWidth <= viewportW && 
-                        checkTop + tileHeight <= viewportH) {
+                    if (checkLeft >= 12 && checkTop >= 12 && 
+                        checkLeft + tileWidth <= viewportW - 12 && 
+                        checkTop + tileHeight <= viewportH - 12) {
                         if (!checkCollision(null, checkLeft, checkTop)) {
                             return { left: `${checkLeft}px`, top: `${checkTop}px` };
                         }
@@ -428,9 +452,9 @@
                     let checkLeft = initialLeft + x;
                     let checkTop = initialTop + y;
                     
-                    if (checkLeft >= 0 && checkTop >= 0 && 
-                        checkLeft + tileWidth <= viewportW && 
-                        checkTop + tileHeight <= viewportH) {
+                    if (checkLeft >= 12 && checkTop >= 12 && 
+                        checkLeft + tileWidth <= viewportW - 12 && 
+                        checkTop + tileHeight <= viewportH - 12) {
                         if (!checkCollision(null, checkLeft, checkTop)) {
                             return { left: `${checkLeft}px`, top: `${checkTop}px` };
                         }
@@ -443,9 +467,9 @@
                     let checkLeft = initialLeft + x;
                     let checkTop = initialTop + y;
                     
-                    if (checkLeft >= 0 && checkTop >= 0 && 
-                        checkLeft + tileWidth <= viewportW && 
-                        checkTop + tileHeight <= viewportH) {
+                    if (checkLeft >= 12 && checkTop >= 12 && 
+                        checkLeft + tileWidth <= viewportW - 12 && 
+                        checkTop + tileHeight <= viewportH - 12) {
                         if (!checkCollision(null, checkLeft, checkTop)) {
                             return { left: `${checkLeft}px`, top: `${checkTop}px` };
                         }
@@ -618,9 +642,10 @@
             const elementW = activeTileElement.offsetWidth;
             const elementH = activeTileElement.offsetHeight;
             
-            // Boundary check: ensures tiles never leave the viewport 
-            newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
-            newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
+            // Boundary check: ensures tiles never leave the viewport, respecting the 12px pin offset
+            const PIN_OFFSET = 12;
+            newLeft = Math.max(PIN_OFFSET, Math.min(newLeft, viewportW - elementW - PIN_OFFSET));
+            newTop = Math.max(PIN_OFFSET, Math.min(newTop, viewportH - elementH - PIN_OFFSET));
             
             // Collision check
             if (checkCollision(activeTileId, newLeft, newTop)) {
