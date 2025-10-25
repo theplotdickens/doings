@@ -50,7 +50,7 @@
         }
     </style>
 </head>
-<body>
+<body onresize="renderAllTiles()">
     
     <section id="canvas-container"></section>
 
@@ -89,30 +89,30 @@
     </div>
 
     <script type="module">
-        // The setLogLevel function has moved to the 'firebase/app' module in recent SDK versions.
-        // It's removed from the import list to fix the SyntaxError.
+        // --- Firebase Imports ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // If you need logging, you would import it separately: import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 
         // =========================================================================================================
-        // ⭐ IMPORTANT: CONFIGURATION REQUIRED FOR SHARED FUNCTIONALITY ⭐
-        // PASTE YOUR OWN FIREBASE CONFIG OBJECT HERE INSTEAD OF THE EMPTY JSON '{}'
-        // You MUST replace '{}' with your actual Firebase config object: 
-        // Example: { apiKey: "AIza...", authDomain: "project.firebaseapp.com", projectId: "project-id", ... }
+        // ⭐ FIREBASE CONFIGURATION INJECTED ⭐
         // =========================================================================================================
-        const FIREBASE_CONFIG_JSON = '{}'; 
-        const FIREBASE_APP_ID = 'default-app-id'; // Use your project ID or desired namespace here
-        // For custom token auth, paste it here. For anonymous sign-in, leave this empty.
-        const AUTH_TOKEN = ''; 
+        const FIREBASE_CONFIG_OBJECT = {
+            apiKey: "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM",
+            authDomain: "doings-7717f.firebaseapp.com",
+            projectId: "doings-7717f",
+            storageBucket: "doings-7717f.firebasestorage.app",
+            messagingSenderId: "566659301557",
+            appId: "1:566659301557:web:b0ff5e651eac824b1bbefc",
+            measurementId: "G-YXYE1G6R27"
+        };
+        const FIREBASE_APP_ID = FIREBASE_CONFIG_OBJECT.projectId;
         // =========================================================================================================
 
         
         // --- Global Firebase State Variables ---
         const appId = FIREBASE_APP_ID;
-        const firebaseConfig = JSON.parse(FIREBASE_CONFIG_JSON);
-        const initialAuthToken = AUTH_TOKEN;
+        const firebaseConfig = FIREBASE_CONFIG_OBJECT; 
 
         let app = null;
         let db = null;
@@ -157,7 +157,7 @@
 
         // --- Utility Functions ---
 
-        function getCurrentTileSize() {
+        window.getCurrentTileSize = function() {
             return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
         }
         
@@ -179,12 +179,7 @@
                     console.error("Error saving tile data:", error);
                 }
             } else {
-                 // In local-only mode, we still update the local state to prevent visual issues
-                 console.warn("Save requested, but no valid db connection. Running local save.");
-                 if (userId && allTiles.has(userId)) {
-                      allTiles.set(userId, {...allTiles.get(userId), ...data});
-                      renderAllTiles();
-                 }
+                 console.warn("Save requested, but no valid db connection.");
             }
         }
         
@@ -216,9 +211,9 @@
                 });
                 
                 allTiles = currentTiles;
-                renderAllTiles();
+                window.renderAllTiles();
                 
-                // Hide or show the prompt based on if the current user has a tile
+                // Show prompt if the user is authenticated but hasn't created a tile yet.
                 if (userId && !allTiles.has(userId)) {
                     showInputPrompt();
                 } else {
@@ -227,7 +222,6 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                // If a listener error occurs, ensure the local tile is shown if it exists.
                 if (userId && allTiles.has(userId)) {
                      hideInputPrompt();
                 } else {
@@ -237,18 +231,16 @@
         }
         
         /**
-         * Initializes Firebase, sets up Auth, and starts the data listener.
+         * Initializes Firebase and starts Auth immediately on load.
          */
-        function setupAuthAndDataDeferred() {
+        function setupAuthAndData() {
             
-            // Check if valid config was provided (i.e., not the default empty '{}')
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
-                    // Initialize Firebase services
+                    // Initialize Firebase services immediately
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    // setLogLevel('Debug'); // Must be imported from 'firebase/app' if needed.
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
@@ -262,46 +254,22 @@
                             
                         } else {
                             userId = null; 
-                            console.warn("User signed out or auth failed. Running non-persistent.");
-                            if (userStatusText) userStatusText.textContent = "Status: Sign-in failed. Tile will not be persistent or shared.";
+                            console.warn("User signed out or auth failed.");
+                            if (userStatusText) userStatusText.textContent = "Status: Sign-in failed. Please refresh.";
                             showInputPrompt();
                         }
                     });
                     
-                    // Attempt sign-in (non-blocking)
-                    if (initialAuthToken.length > 0) {
-                        signInWithCustomToken(auth, initialAuthToken)
-                            .catch(error => console.error("Custom Sign-in Failed (non-blocking):", error));
-                    } else {
-                        signInAnonymously(auth)
-                            .catch(error => console.error("Anonymous Sign-in Failed (non-blocking):", error));
-                    }
+                    // Attempt anonymous sign-in
+                    signInAnonymously(auth)
+                        .catch(error => console.error("Anonymous Sign-in Failed:", error));
+
 
                 } catch (error) {
                     console.error("FATAL: Error during Firebase initialization:", error);
-                    if (userStatusText) userStatusText.textContent = "Status: Firebase initialization failed. Local session only.";
+                    if (userStatusText) userStatusText.textContent = "Status: FATAL ERROR - Check console and configuration.";
                     showInputPrompt();
                 }
-            } else {
-                // FALLBACK: Run immediately if config is missing (this prevents the hang when config isn't provided)
-                if (userStatusText) userStatusText.textContent = "Status: Firebase config missing. Local session only.";
-                // We set a temporary ID for local-only functionality
-                userId = 'local-user';
-                // Create a temporary local tile to allow the user to immediately interact
-                if (!allTiles.has(userId)) {
-                    allTiles.set(userId, {
-                        creatorId: userId, 
-                        name: 'Local User',
-                        color: COLORS['Blue'],
-                        left: '50%',
-                        top: '50%',
-                        createdAt: new Date().toLocaleDateString('en-US'),
-                        movesMade: 0, 
-                        moveRestrictionEndTime: 0,
-                    });
-                    renderAllTiles();
-                }
-                showInputPrompt();
             }
         }
         
@@ -312,7 +280,7 @@
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
-            // Only allow drag if the tile belongs to the current user (or is the local-only tile)
+            // Only allow drag if the tile belongs to the current user
             if (tileData.creatorId !== userId) return;
             
             if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) return;
@@ -396,7 +364,7 @@
 
         // --- Tile Rendering ---
         
-        function renderSingleTile(tileId, tileData) {
+        window.renderSingleTile = function(tileId, tileData) {
             const domId = `tile-${tileId}`;
             let tileElement = document.getElementById(domId);
             let cooldownIntervalId = parseInt(tileElement?.dataset?.cooldownInterval || '0');
@@ -510,14 +478,14 @@
             tileElement.style.top = tileData.top; 
         }
 
-        function renderAllTiles() {
+        window.renderAllTiles = function() {
             const existingTileIds = new Set();
             canvasContainer.querySelectorAll('.draggable-tile').forEach(el => {
                 existingTileIds.add(el.dataset.tileId);
             });
             
             for (const [id, data] of allTiles.entries()) {
-                renderSingleTile(id, data);
+                window.renderSingleTile(id, data);
                 existingTileIds.delete(id); 
             }
             
@@ -557,29 +525,19 @@
                 swatch.title = name;
                 swatch.className = `color-swatch w-8 h-8 rounded-full shadow-md hover:ring-2 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
                 
-                // Use mousedown/touchstart for reliability
                 const selectColorHandler = (e) => {
-                    // Prevent default action (like scrolling on touch)
                     e.preventDefault(); 
-                    
-                    // Only process on the 'down' action to ensure instant response
                     selectedColor = colorClass;
                     applyRing(selectedColor);
-                    
-                    // Optionally refocus the input after color selection for convenience
                     if (e.type === 'mousedown') input.focus(); 
                 };
 
-                // Direct Mouse Down Listener
                 swatch.addEventListener('mousedown', selectColorHandler);
-                
-                // Direct Touch Start Listener for touch devices
                 swatch.addEventListener('touchstart', selectColorHandler);
 
                 colorPicker.appendChild(swatch);
             });
             
-            // Re-apply ring after creating all swatches
             applyRing(selectedColor);
 
 
@@ -600,7 +558,6 @@
             const createNewTile = () => {
                 const name = input.value.trim();
                 if (!name || name.length === 0 || !userId) {
-                     // Check if button is enabled by input, and if auth has completed
                      if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
                      showInputPrompt(); // Reshow prompt if data is missing
                      return;
@@ -614,7 +571,7 @@
                     day: 'numeric' 
                 });
                 
-                const size = getCurrentTileSize();
+                const size = window.getCurrentTileSize();
                 const initialLeft = `${(window.innerWidth / 2) - (size / 2)}px`;
                 const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
                 
@@ -629,18 +586,12 @@
                     moveRestrictionEndTime: 0,
                 };
                 
-                // Clear any old local-user tile if a new one is created after auth completes
-                if (allTiles.has('local-user') && userId !== 'local-user') {
-                    allTiles.delete('local-user');
-                }
-
                 saveTile(newTileData);
             };
 
             // Direct Click and Touchend listeners for the submit button
             button.addEventListener('click', createNewTile);
             button.addEventListener('touchend', (e) => {
-                // Prevent touch from triggering other events
                 e.preventDefault();
                 createNewTile();
             });
@@ -658,14 +609,8 @@
         // 1. Setup prompt handlers immediately for responsiveness
         setupPromptHandlers();
 
-        // 2. Defer ALL Firebase Initialization to guarantee UI is painted first.
-        window.onload = function () {
-            // Ensure responsiveness
-            window.addEventListener('resize', renderAllTiles); 
-            
-            // Push heavy lifting to the end of the event queue
-            setTimeout(setupAuthAndDataDeferred, 0); 
-        };
+        // 2. Start Firebase initialization immediately on DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', setupAuthAndData);
         
     </script>
 </body>
