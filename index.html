@@ -33,7 +33,10 @@
             cursor: grab;
             transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
-            background-size: cover;
+            /* --- IMAGE FIX: Changed 'cover' to 'contain' and added no-repeat --- */
+            background-size: contain; 
+            background-repeat: no-repeat;
+            /* --- END IMAGE FIX --- */
             background-position: center;
             background-color: #3b82f6; /* Fallback blue */
             border-radius: 0; 
@@ -76,7 +79,7 @@
             bottom: 0;
             left: 0;
             right: 0;
-            background-color: rgba(0, 0, 0, 0.75);
+            background-color: rgba(0, 0, 0, 0.9); /* Darker for contrast */
             color: white;
             padding: 8px; /* py-2 */
             font-size: 0.75rem; /* text-xs */
@@ -170,12 +173,15 @@
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================================================
-        // ⭐ FIREBASE CONFIGURATION INJECTED ⭐
-        // We trust the runtime environment to provide these variables.
+        // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK (Fixed with user's Project ID and API Key) 🚀
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+        
+        // Manual fallbacks used to fix the initialization error
+        const manualProjectIdFallback = "doings-7717f"; 
+        const manualApiKeyFallback = "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM"; 
         
         // --- Global Firebase State Variables ---
         let app = null;
@@ -348,13 +354,6 @@
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
             
-            // =========================================================================================================
-            // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK (Fixed with user's Project ID and API Key) 🚀
-            // These fallbacks are used because the environment failed to provide the full config object.
-            // =========================================================================================================
-            const manualProjectIdFallback = "doings-7717f"; 
-            const manualApiKeyFallback = "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM"; // <-- API KEY INSERTED HERE
-
             try {
                 // 1. CRITICAL CONFIGURATION CHECK & FALLBACK LOGIC
                 if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
@@ -567,42 +566,43 @@
 
             // Set background image style
             if (tileData.base64Image) {
+                // ADDED LOG: This will confirm if the large Base64 string is still present at render time.
+                console.log(`Rendering tile ${tileId}. Image data size: ${tileData.base64Image.length} characters.`);
+                
                 tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
-                tileElement.style.backgroundColor = 'transparent'; 
+                
+                // FIX: Use a visible background color if the image fails to load (instead of transparent)
+                // This prevents the "transparent rectangle" issue by ensuring the tile is visible even if the image URL fails.
+                tileElement.style.backgroundColor = '#d1d5db'; // bg-gray-300
             } else {
+                console.warn(`Rendering tile ${tileId}. Missing base64Image data.`);
                 tileElement.style.backgroundImage = 'none';
                 tileElement.style.backgroundColor = '#4B5563'; 
             }
 
             const textColor = 'text-white'; 
             
-            // Text logic
-            let statusText = isMyTile ? '' : `Shared by ${tileData.name}`;
-
+            // --- UPDATED: Moves display for the Info Tag ---
             let movesDisplayText = '';
             if (isMyTile) {
-                 movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves: ${movesLeft}/${MAX_DRAG_SESSIONS}`;
+                 movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft}/${MAX_DRAG_SESSIONS}`;
             } else {
-                 movesDisplayText = 'Shared Piece';
+                 movesDisplayText = 'Shared Piece (Move limit does not apply to you)';
             }
             
-            // NEW: Info tag and toggle button
+            // NEW: Info tag content now includes Name and Moves
             const infoTagContent = `
-                <p class="font-bold mb-1 truncate">Name: ${tileData.name}</p>
-                <p>Moves: ${tileData.movesMade}/${MAX_DRAG_SESSIONS}</p>
-                <p class="text-[8px] opacity-70 break-all">ID: ${tileId}</p>
+                <p class="font-bold mb-1 truncate text-lg">Name: ${tileData.name}</p>
+                <p class="mb-1">Owner: ${isMyTile ? 'You' : tileData.name}</p>
+                <p class="font-mono text-xs">${movesDisplayText}</p> 
+                <p class="text-[8px] opacity-70 break-all mt-1">ID: ${tileId}</p>
             `;
-
+            
+            // --- Main tile content (Simplified) ---
             tileElement.innerHTML = `
-                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none bg-black bg-opacity-40">
-                    <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none truncate max-w-full">
-                        ${tileData.name}
-                    </h2>
-                    <p class="text-xs italic font-normal ${textColor} opacity-80 mt-2 select-none">
-                        ${statusText}
-                    </p>
-                    <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100" id="moves-display-text-${tileId}">
-                        ${movesDisplayText}
+                <div class="h-full w-full flex flex-col justify-end items-end p-2 select-none pointer-events-none">
+                    <p class="text-xs italic font-normal ${textColor} opacity-80 select-none bg-black bg-opacity-40 px-2 py-1">
+                        ${isMyTile ? 'Your Tile' : `Shared by ${tileData.name}`}
                     </p>
                 </div>
                 <!-- Hidden Info Tag -->
@@ -620,16 +620,26 @@
             const infoTag = tileElement.querySelector(`#info-tag-${tileId}`);
             
             if (toggleButton && infoTag) {
-                const toggleInfo = (e) => {
-                    e.stopPropagation(); // Prevent drag from starting if clicking button
+                const toggleInfo = () => {
                     infoTag.classList.toggle('visible');
                     toggleButton.textContent = infoTag.classList.contains('visible') ? 'x' : '+';
                 };
-                // Ensure touch events are handled correctly
+                
+                // Stop Propagation to prevent drag from starting and counting as a move
+                const stopPropagation = (e) => {
+                    e.stopPropagation();
+                }
+
+                // Block drag initiation on mousedown/touchstart
+                toggleButton.addEventListener('mousedown', stopPropagation);
+                toggleButton.addEventListener('touchstart', stopPropagation, { passive: false });
+                
+                // Attach actual toggle functionality to the click/touchend events
                 toggleButton.addEventListener('click', toggleInfo);
                 toggleButton.addEventListener('touchend', (e) => {
-                    e.preventDefault(); // Prevent ghost clicks
-                    toggleInfo(e);
+                    e.preventDefault(); // Prevent ghost click and scrolling
+                    e.stopPropagation(); // Safe guard
+                    toggleInfo();
                 });
             }
 
@@ -661,11 +671,10 @@
             if (userId && isMyTile && isRestricted) {
                 if (cooldownIntervalId) clearInterval(cooldownIntervalId);
                 
-                const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
-                
                 const updateRestrictionDisplay = () => {
                     const now = Date.now();
                     const timeRemaining = tileData.moveRestrictionEndTime - now;
+                    const movesDisplayElement = tileElement.querySelector('.info-tag p:nth-child(3)'); // Target the move status in the info tag
 
                     if (timeRemaining <= 0) {
                         clearInterval(parseInt(tileElement.dataset.cooldownInterval));
@@ -689,8 +698,10 @@
                  tileElement.dataset.cooldownInterval = '0';
             }
             
-            // Set position
-            if(tileData.left && tileData.top) {
+            // Set position - CRITICAL FIX: Skip setting position if the tile is actively being dragged
+            const isCurrentlyDragged = activeTileId === tileId && isDragging;
+            
+            if(!isCurrentlyDragged && tileData.left && tileData.top) {
                 tileElement.style.left = tileData.left; 
                 tileElement.style.top = tileData.top; 
             }
