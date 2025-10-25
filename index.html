@@ -67,10 +67,19 @@
             background-color: #ffffff;
             border-radius: 0; 
             will-change: transform;
+            cursor: pointer; /* Default cursor for view-only */
+        }
+
+        .draggable-tile.is-movable {
+            cursor: grab !important;
+        }
+
+        .draggable-tile.is-cooldown {
+            cursor: not-allowed !important;
         }
         
         .draggable-tile:active, .draggable-tile.active-drag-state {
-            cursor: grabbing;
+            cursor: grabbing !important;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
             z-index: 20; 
             transform: scale(1.01); 
@@ -285,7 +294,7 @@
         let uploadedBase64Image = null; 
         
         const MAX_DRAG_SESSIONS = 6;
-        const COOLDOWN_DURATION_MS = 60000;
+        const COOLDOWN_DURATION_MS = 60000; // 60 seconds
         
         let isDragging = false;
         let activeTileElement = null;
@@ -372,7 +381,8 @@
                 await setDoc(tileRef, data, { merge: true });
             } catch (error) {
             } finally {
-                // Delay clearing the flag slightly to allow the onSnapshot listener to receive the update first
+                // Delay clearing the flag slightly to allow the server to register the change 
+                // before the listener receives a potentially stale update.
                 setTimeout(() => {
                     isSaving = false;
                 }, 50); 
@@ -515,6 +525,12 @@
             const tileId = `tile-${tileData.creatorId}`;
             let tileElement = document.getElementById(tileId);
 
+            const isUserTile = tileData.creatorId === userId;
+            const now = Date.now();
+            const lastMove = tileData.lastMoveTime || 0;
+            const sessionsLeft = tileData.dragSessionsLeft || 0;
+            const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
+
             if (!tileElement) {
                 tileElement = document.createElement('div');
                 tileElement.id = tileId;
@@ -534,6 +550,7 @@
                     </div>
                 `;
                 
+                // Add click listener for zoom/info outside of the drag flow
                 tileElement.addEventListener('click', (e) => {
                     if (e.target.classList.contains('info-toggle-button') || e.target.closest('.info-toggle-button')) {
                         return;
@@ -542,36 +559,23 @@
                 });
                 
                 canvasContainer.appendChild(tileElement);
-                
             }
+
+            // Update state classes for cursor based on tile data
+            tileElement.classList.remove('is-movable', 'is-cooldown');
+            if (isUserTile) {
+                if (isUnderCooldown) {
+                    tileElement.classList.add('is-cooldown');
+                } else if (sessionsLeft > 0) {
+                    tileElement.classList.add('is-movable');
+                }
+            }
+
 
             tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
             tileElement.style.left = tileData.left || '0px';
             tileElement.style.top = tileData.top || '0px';
             
-            const isUserTile = tileData.creatorId === userId;
-            const now = Date.now();
-            const lastMove = tileData.lastMoveTime || 0;
-            const sessionsLeft = tileData.dragSessionsLeft || 0;
-            
-            const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
-            
-            // Remove existing listeners before re-adding
-            tileElement.removeEventListener('mousedown', startDrag);
-            tileElement.removeEventListener('touchstart', startDrag);
-
-            if (isUserTile) {
-                if (!isUnderCooldown && sessionsLeft > 0) {
-                    tileElement.style.cursor = 'grab';
-                    tileElement.addEventListener('mousedown', startDrag);
-                    tileElement.addEventListener('touchstart', startDrag, { passive: false }); // Added passive: false for touch fix
-                } else {
-                    tileElement.style.cursor = 'not-allowed';
-                }
-            } else {
-                tileElement.style.cursor = 'pointer';
-            }
-
             const infoTag = document.getElementById(`info-tag-${tileData.creatorId}`);
             if (infoTag) {
                 const lastMoveDate = new Date(tileData.lastMoveTime || Date.now());
@@ -593,24 +597,54 @@
             allTiles.forEach((data) => createTileElement(data));
         }
 
-        function startDrag(e) {
-            // Mobile Fix: Prevent default touch actions immediately
-            if (e.type === 'touchstart') {
-                e.preventDefault(); 
-            }
+        // --- DRAG LOGIC REFACTORED USING EVENT DELEGATION ---
+
+        function setupDragEvents() {
+            canvasContainer.addEventListener('mousedown', delegatedStartDrag);
+            canvasContainer.addEventListener('touchstart', delegatedStartDrag, { passive: false });
+        }
+
+        function isTileMovable(tileId) {
+            const tileData = allTiles.get(tileId);
+            if (!tileData || tileData.creatorId !== userId) return false;
             
+            const now = Date.now();
+            const lastMove = tileData.lastMoveTime || 0;
+            const sessionsLeft = tileData.dragSessionsLeft || 0;
+            const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
+
+            return sessionsLeft > 0 && !isUnderCooldown;
+        }
+
+        function delegatedStartDrag(e) {
+            // Find the closest tile element up the DOM tree
+            const targetTile = e.target.closest('.draggable-tile');
+
+            if (!targetTile) return;
+
+            // Prevent drag if clicking the info button inside the tile
             if (e.target.classList.contains('info-toggle-button') || e.target.closest('.info-toggle-button')) {
                 return;
             }
 
-            const target = e.currentTarget;
-            activeTileElement = target;
-            activeTileId = target.dataset.creatorId;
+            const creatorId = targetTile.dataset.creatorId;
+
+            // Check if this tile is movable by the current user
+            if (!isTileMovable(creatorId)) {
+                return;
+            }
+
+            // Mobile Fix: Prevent default touch actions immediately to start drag
+            if (e.type === 'touchstart') {
+                e.preventDefault(); 
+            }
+
+            activeTileElement = targetTile;
+            activeTileId = creatorId;
             isDragging = true;
             
             activeTileElement.classList.add('active-drag-state');
             
-            // Use e.clientX/Y for mouse, or the first touch point for touch
             const clientX = e.clientX || e.touches[0].clientX;
             const clientY = e.clientY || e.touches[0].clientY;
 
@@ -618,21 +652,21 @@
             offsetX = clientX - rect.left;
             offsetY = clientY - rect.top;
 
+            // Attach global move/end listeners
             document.addEventListener('mousemove', drag);
             document.addEventListener('mouseup', endDrag);
             document.addEventListener('touchmove', drag, { passive: false });
             document.addEventListener('touchend', endDrag);
         }
 
+
         function drag(e) {
             if (!isDragging) return;
 
-            // Mobile Fix: Prevent default touch actions immediately
             if (e.type === 'touchmove') {
                 e.preventDefault(); 
             }
             
-            // Use e.clientX/Y for mouse, or the first touch point for touch
             const clientX = e.clientX || e.touches[0].clientX;
             const clientY = e.clientY || e.touches[0].clientY;
             
@@ -661,6 +695,7 @@
             lastClickTime = Date.now();
             isDragging = false;
             
+            // Remove global move/end listeners
             document.removeEventListener('mousemove', drag);
             document.removeEventListener('mouseup', endDrag);
             document.removeEventListener('touchmove', drag);
@@ -675,6 +710,7 @@
                 if (checkCollision(activeTileId, newLeftPx, newTopPx)) {
                     const currentTileData = allTiles.get(activeTileId);
                     if (currentTileData) {
+                         // Snap back to last valid position (received from Firestore)
                          activeTileElement.style.left = currentTileData.left || '0px';
                          activeTileElement.style.top = currentTileData.top || '0px';
                     }
@@ -736,6 +772,7 @@
                         authReady = true;
                         userStatusText.textContent = `User ID: ${userId.slice(0, 8)}... | App ID: ${appId}`;
                         startListeningForTiles();
+                        setupDragEvents(); // Setup delegation events after auth
                     } else {
                         userId = null;
                         authReady = false;
@@ -757,7 +794,6 @@
             onSnapshot(tilesQuery, (snapshot) => {
                 
                 // IMPORTANT: Ignore incoming data while *we* are saving a tile move.
-                // This prevents the data from "snapping back" due to the listener receiving old data.
                 if (isSaving) {
                     return;
                 }
