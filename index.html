@@ -66,7 +66,7 @@
                 height: 500px;
             }
         }
-        /* NEW: Styles for the info tag and toggle button */
+        /* Styles for the info tag and toggle button */
         .info-tag {
             position: absolute;
             bottom: 0;
@@ -139,7 +139,7 @@
                     maxlength="15"
                 >
                 
-                <!-- NEW: Image Upload Section -->
+                <!-- Image Upload Section -->
                 <div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600">Upload Your Background Image (PNG/JPG)</p>
                     <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
@@ -266,11 +266,6 @@
 
         /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
-         * Logic is updated to use width and height independently for rectangles.
-         * @param {string} targetId - The ID of the tile being moved.
-         * @param {number} newLeft - The proposed new 'left' position in pixels.
-         * @param {number} newTop - The proposed new 'top' position in pixels.
-         * @returns {boolean} - True if a collision is detected, false otherwise.
          */
         function checkCollision(targetId, newLeft, newTop) {
             const targetElement = document.getElementById(`tile-${targetId}`);
@@ -379,7 +374,6 @@
                     // NOTE: signInWithCustomToken is correctly imported above
                     if (initialAuthToken) {
                         // Use provided custom token
-                        // Removed async/await here as onAuthStateChanged handles final resolution
                         signInWithCustomToken(auth, initialAuthToken)
                              .catch(error => console.error("Custom Sign-in Failed:", error));
                     } else {
@@ -692,7 +686,7 @@
                 const imageValid = uploadedBase64Image !== null; // Check if image data is present
                 
                 // Debugging log for the user
-                console.log(`[Validation Check] Name: ${nameValid}, Image: ${imageValid}, Button Disabled: ${!(nameValid && imageValid)}`);
+                // console.log(`[Validation Check] Name: ${nameValid}, Image: ${imageValid}, Button Disabled: ${!(nameValid && imageValid)}`);
                 
                 createButton.disabled = !(nameValid && imageValid);
             };
@@ -738,13 +732,31 @@
 
 
             const createNewTile = () => {
+                console.log("Attempting to create new tile...");
+
                 const name = createNameInput.value.trim();
+                
                 // Final check before submission
-                if (!name || !userId || !uploadedBase64Image) {
-                     if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
-                     return;
+                if (!name) {
+                    console.warn("Cannot create tile: Name is missing.");
+                    return;
+                }
+                if (!uploadedBase64Image) {
+                    console.warn("Cannot create tile: Image is missing.");
+                    return;
+                }
+                if (!userId) {
+                    // This is the common failure point when the user clicks too fast before auth completes.
+                    console.warn("Cannot create tile: Authentication in progress or failed. Please wait for ID to appear.");
+                    if (userStatusText) userStatusText.innerHTML = `Please wait, signing you in. Your ID is loading...`;
+                    // Do NOT return here, just in case auth finishes immediately after this check, but usually return is fine.
+                    // For safety, we return to prevent saving with a null ID.
+                    return;
                 }
                 
+                console.log(`Successfully validated inputs for user: ${userId}`);
+
+                // Proceed with creation
                 hideModal(createPromptModal);
                 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
@@ -760,7 +772,7 @@
                 const newTileData = {
                     creatorId: userId, 
                     name: name,
-                    base64Image: uploadedBase64Image, // Store image data instead of color
+                    base64Image: uploadedBase64Image, // Store image data
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
@@ -771,6 +783,7 @@
                 saveTile(newTileData);
             };
 
+            // Event Listeners for the button
             createButton.addEventListener('click', createNewTile);
             createButton.addEventListener('touchend', (e) => { e.preventDefault(); createNewTile(); });
             createNameInput.addEventListener('keypress', (e) => {
