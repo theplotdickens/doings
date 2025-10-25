@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shared Draggable Image Tiles</title>
-    <!-- Load Tailwind CSS for modern styling -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Tailwind CSS for modern styling --><script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
@@ -21,6 +20,7 @@
              width: 100%;
              height: 100%;
         }
+        /* UPDATED: Hard angled corners */
         .draggable-tile {
             position: absolute;
             user-select: none;
@@ -30,6 +30,7 @@
             background-size: cover;
             background-position: center;
             background-color: #3b82f6; /* Fallback blue */
+            border-radius: 0; /* REMOVED rounded corners */
         }
         /* Visual feedback for when the tile is actively being dragged */
         .draggable-tile:active, .draggable-tile.active-drag-state {
@@ -63,20 +64,64 @@
                 height: 500px;
             }
         }
+        /* NEW: Styles for the info tag and toggle button */
+        .info-tag {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 8px; /* py-2 */
+            font-size: 0.75rem; /* text-xs */
+            line-height: 1rem;
+            text-align: center;
+            opacity: 0;
+            transform: translateY(100%); /* Start off-screen */
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            z-index: 15; /* Above default tile content but below button */
+            pointer-events: none; /* Do not interfere with drag/click on tile */
+            border-bottom-left-radius: 0; /* Hard angled */
+            border-bottom-right-radius: 0; /* Hard angled */
+        }
+        .info-tag.visible {
+            opacity: 1;
+            transform: translateY(0); /* Slide into view */
+            pointer-events: auto; /* Enable interaction when visible */
+        }
+        .info-toggle-button {
+            position: absolute;
+            bottom: 0px; /* Adjusted to sit at the very bottom edge */
+            right: 0px; /* Adjusted to sit at the very right edge */
+            background-color: rgba(60, 60, 60, 0.8); /* Darker gray for contrast */
+            color: white;
+            border: none;
+            width: 30px; /* Square button */
+            height: 30px; /* Square button */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.25rem; /* text-xl */
+            cursor: pointer;
+            z-index: 25; /* Always on top */
+            border-top-left-radius: 0; /* Hard angled */
+            border-bottom-right-radius: 0; /* Hard angled */
+            transition: background-color 0.2s ease;
+        }
+        .info-toggle-button:hover {
+            background-color: rgba(90, 90, 90, 0.9);
+        }
     </style>
 </head>
 <body onresize="renderAllTiles()">
     
-    <!-- Main container for all draggable tiles -->
-    <section id="canvas-container"></section>
+    <!-- Main container for all draggable tiles --><section id="canvas-container"></section>
 
-    <!-- INPUT PROMPT MODAL: Visible until the user creates a tile -->
-    <div id="input-prompt-modal" class="prompt-modal-overlay">
+    <!-- INPUT PROMPT MODAL: Visible until the user creates a tile --><div id="input-prompt-modal" class="prompt-modal-overlay">
         <div class="w-full max-w-sm mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Image Tile</p>
-                <!-- Status text for Firebase initialization -->
-                <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
+                <!-- Status text for Firebase initialization --><p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
                     Status: UI loaded. Initializing services...
                 </p>
 
@@ -89,8 +134,7 @@
                     maxlength="15"
                 >
                 
-                <!-- NEW: Image Upload Section -->
-                <div class="flex flex-col space-y-2">
+                <!-- NEW: Image Upload Section --><div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600">Upload Your Background Image (PNG/JPG)</p>
                     <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
                     
@@ -121,7 +165,7 @@
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
         // =========================================================================================================
 
         
@@ -156,7 +200,8 @@
         const TILE_WIDTH_LG = 400; 
         const TILE_HEIGHT_LG = 500; 
         
-        const TILE_BASE_CLASSES = "shadow-2xl rounded-xl draggable-tile"; 
+        // UPDATED: Removed rounded-xl class
+        const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
         const TILE_SIZE_CLASSES = "size-rect-sm sm:size-rect-lg"; // Uses custom CSS classes for precise size control
 
         // --- Utility Functions ---
@@ -194,7 +239,7 @@
         }
         
         /**
-         * Converts a File object to a Base64 string.
+         * Converts a File object to a Base64 string using FileReader.
          * @param {File} file - The image file to convert.
          * @returns {Promise<string>} - The Base64 data URL.
          */
@@ -202,8 +247,13 @@
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = error => reject(error);
+                reader.onload = () => {
+                    resolve(reader.result);
+                }
+                reader.onerror = error => {
+                    console.error("FileReader Error:", error);
+                    reject(error);
+                };
             });
         }
 
@@ -319,13 +369,15 @@
                         }
                     });
                     
+                    // NOTE: signInWithCustomToken is correctly imported above
                     if (initialAuthToken) {
                         // Use provided custom token
-                        await signInWithCustomToken(auth, initialAuthToken)
+                        // Removed async/await here as onAuthStateChanged handles final resolution
+                        signInWithCustomToken(auth, initialAuthToken)
                              .catch(error => console.error("Custom Sign-in Failed:", error));
                     } else {
                         // Fallback to anonymous sign-in
-                        await signInAnonymously(auth)
+                        signInAnonymously(auth)
                             .catch(error => console.error("Anonymous Sign-in Failed:", error));
                     }
 
@@ -449,6 +501,7 @@
                 tileElement = document.createElement('div');
                 tileElement.id = domId;
                 tileElement.dataset.tileId = tileId;
+                // REMOVED rounded-xl class, now just plain `draggable-tile`
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
             }
@@ -465,19 +518,19 @@
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
             // Use centralized class constants for size
-            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`;
+            // Ensure tileElement.className is correctly set to include base classes
+            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
 
-            // Set background image style
+            // Set background image style - FIX: Ensure this is always applied
             if (tileData.base64Image) {
                 tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
-                tileElement.style.backgroundColor = 'transparent'; // Ensure background color doesn't show over image
+                tileElement.style.backgroundColor = 'transparent'; 
             } else {
-                // Fallback style if image data is missing (use a placeholder solid color)
                 tileElement.style.backgroundImage = 'none';
-                tileElement.style.backgroundColor = '#4B5563'; // Dark gray fallback
+                tileElement.style.backgroundColor = '#4B5563'; 
             }
 
-            const textColor = 'text-white'; // Always use white text over the image/fallback color
+            const textColor = 'text-white'; 
             
             // Text logic
             let statusText = isMyTile ? '' : `Shared by ${tileData.name}`;
@@ -488,9 +541,16 @@
             } else {
                  movesDisplayText = 'Shared Piece';
             }
+            
+            // NEW: Info tag and toggle button
+            const infoTagContent = `
+                <p class="font-bold mb-1 truncate">Name: ${tileData.name}</p>
+                <p>Moves: ${tileData.movesMade}/${MAX_DRAG_SESSIONS}</p>
+                <p class="text-[8px] opacity-70 break-all">ID: ${tileId.substring(0, 8)}...</p>
+            `;
 
             tileElement.innerHTML = `
-                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none bg-black bg-opacity-40 rounded-xl">
+                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none bg-black bg-opacity-40">
                     <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none truncate max-w-full">
                         ${tileData.name}
                     </h2>
@@ -500,12 +560,33 @@
                     <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100" id="moves-display-text-${tileId}">
                         ${movesDisplayText}
                     </p>
-                    <p class="text-[9px] font-mono text-center mt-1 ${textColor} opacity-50">
-                        ID: ${tileId.substring(0, 8)}...
-                    </p>
                 </div>
+                <!-- Info Tag --><div id="info-tag-${tileId}" class="info-tag">
+                    ${infoTagContent}
+                </div>
+                <!-- Toggle Button --><button id="info-toggle-${tileId}" class="info-toggle-button">
+                    +
+                </button>
             `;
             
+            // Attach toggle button listener
+            const toggleButton = tileElement.querySelector(`#info-toggle-${tileId}`);
+            const infoTag = tileElement.querySelector(`#info-tag-${tileId}`);
+            
+            if (toggleButton && infoTag) {
+                const toggleInfo = (e) => {
+                    e.stopPropagation(); // Prevent drag from starting if clicking button
+                    infoTag.classList.toggle('visible');
+                    toggleButton.textContent = infoTag.classList.contains('visible') ? 'x' : '+';
+                };
+                toggleButton.addEventListener('click', toggleInfo);
+                toggleButton.addEventListener('touchend', (e) => {
+                    e.preventDefault(); // Prevent ghost clicks
+                    toggleInfo(e);
+                });
+            }
+
+            // Dragging logic
             if (isMyTile && !isRestricted) {
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
@@ -594,15 +675,15 @@
             const createButton = document.getElementById('submit-button');
             
             const checkCreateInput = () => {
-                // FIX: Ensures button is enabled only when both name and image data are present.
                 const nameValid = createNameInput.value.trim().length > 0;
-                const imageValid = uploadedBase64Image !== null;
+                const imageValid = uploadedBase64Image !== null; // Check if image data is present
                 createButton.disabled = !(nameValid && imageValid);
             };
 
             // Image file reader for preview and storage
             imageUploadInput.addEventListener('change', async (e) => {
                 const file = e.target.files[0];
+                
                 if (!file) {
                     uploadedBase64Image = null;
                     imagePreviewElement.style.backgroundImage = 'none';
@@ -611,27 +692,35 @@
                     return;
                 }
                 
+                // Show loading state immediately
+                imagePreviewElement.textContent = 'Loading...';
+                imagePreviewElement.style.backgroundImage = 'none';
+
                 try {
                     uploadedBase64Image = await fileToBase64(file);
+                    // Update preview style
                     imagePreviewElement.style.backgroundImage = `url('${uploadedBase64Image}')`;
                     imagePreviewElement.textContent = '';
+                    
                 } catch (error) {
                     console.error("Error converting file to base64:", error);
                     uploadedBase64Image = null;
                     imagePreviewElement.style.backgroundImage = 'none';
                     imagePreviewElement.textContent = 'Error';
                 }
-                checkCreateInput();
+                
+                checkCreateInput(); // Final state check
             });
 
             createNameInput.addEventListener('keyup', checkCreateInput); 
             createNameInput.addEventListener('input', checkCreateInput); 
-            checkCreateInput();
+            // Initial check when component loads (in case of cached values)
+            checkCreateInput(); 
 
 
             const createNewTile = () => {
                 const name = createNameInput.value.trim();
-                // Check again before final submission
+                // Final check before submission
                 if (!name || !userId || !uploadedBase64Image) {
                      if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
                      return;
