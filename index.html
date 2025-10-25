@@ -350,6 +350,8 @@
          * Initializes Firebase and starts Auth immediately on load.
          */
         function setupAuthAndData() {
+            const createButton = document.getElementById('submit-button');
+
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
                     app = initializeApp(firebaseConfig);
@@ -357,12 +359,17 @@
                     auth = getAuth(app);
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
-
+                    
+                    // Set up Auth State Change Listener
                     onAuthStateChanged(auth, async (user) => {
                         if (user) {
                             userId = user.uid;
                             startDataListener(); 
-                            if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
+                            if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
+
+                            // CRITICAL FIX: Trigger validation check now that we have the userId
+                            if(createButton.checkInputStatus) createButton.checkInputStatus();
+
                         } else {
                             userId = null; 
                             console.warn("User signed out or auth failed.");
@@ -371,13 +378,11 @@
                         }
                     });
                     
-                    // NOTE: signInWithCustomToken is correctly imported above
+                    // Attempt sign-in
                     if (initialAuthToken) {
-                        // Use provided custom token
                         signInWithCustomToken(auth, initialAuthToken)
                              .catch(error => console.error("Custom Sign-in Failed:", error));
                     } else {
-                        // Fallback to anonymous sign-in
                         signInAnonymously(auth)
                             .catch(error => console.error("Anonymous Sign-in Failed:", error));
                     }
@@ -680,16 +685,18 @@
             const imagePreviewElement = document.getElementById('image-preview');
             const createButton = document.getElementById('submit-button');
             
-            // MODIFIED: Added console logging for debugging.
+            // Function to check all three inputs: name, image, and authentication status
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
-                const imageValid = uploadedBase64Image !== null; // Check if image data is present
+                const imageValid = uploadedBase64Image !== null; 
+                const authReady = userId !== null; // Check for authenticated user ID
                 
-                // Debugging log for the user
-                // console.log(`[Validation Check] Name: ${nameValid}, Image: ${imageValid}, Button Disabled: ${!(nameValid && imageValid)}`);
-                
-                createButton.disabled = !(nameValid && imageValid);
+                // CRITICAL FIX: Only enable if all three conditions are met.
+                createButton.disabled = !(nameValid && imageValid && authReady);
             };
+
+            // Expose the check function on the button for use in setupAuthAndData
+            createButton.checkInputStatus = checkCreateInput;
 
             // Image file reader for preview and storage
             imageUploadInput.addEventListener('change', async (e) => {
@@ -727,34 +734,26 @@
             createNameInput.addEventListener('keyup', checkCreateInput); 
             createNameInput.addEventListener('input', checkCreateInput); 
             
-            // Initial check when component loads (in case of cached values)
+            // Initial check when component loads
             checkCreateInput(); 
 
 
             const createNewTile = () => {
-                console.log("Attempting to create new tile...");
-
                 const name = createNameInput.value.trim();
                 
-                // Final check before submission
-                if (!name) {
-                    console.warn("Cannot create tile: Name is missing.");
-                    return;
-                }
-                if (!uploadedBase64Image) {
-                    console.warn("Cannot create tile: Image is missing.");
+                // Final checks before submission
+                if (!name || !uploadedBase64Image) {
+                    // Should be blocked by button.disabled, but safe check anyway
+                    console.warn("Cannot create tile: Name or Image missing.");
                     return;
                 }
                 if (!userId) {
-                    // This is the common failure point when the user clicks too fast before auth completes.
-                    console.warn("Cannot create tile: Authentication in progress or failed. Please wait for ID to appear.");
-                    if (userStatusText) userStatusText.innerHTML = `Please wait, signing you in. Your ID is loading...`;
-                    // Do NOT return here, just in case auth finishes immediately after this check, but usually return is fine.
-                    // For safety, we return to prevent saving with a null ID.
+                    console.error("Critical Error: Clicked enabled button but userId is null. Race condition failure.");
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: AUTH FAILED. Please wait and try again.</span>`;
                     return;
                 }
                 
-                console.log(`Successfully validated inputs for user: ${userId}`);
+                console.log(`Successfully creating tile for user: ${userId}`);
 
                 // Proceed with creation
                 hideModal(createPromptModal);
