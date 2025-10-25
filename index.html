@@ -82,7 +82,6 @@
             transform: translateY(100%); /* Start off-screen */
             transition: opacity 0.3s ease, transform 0.3s ease;
             z-index: 15; /* Above default tile content but below button */
-            pointer-events: none; /* Do not interfere with drag/click on tile */
             border-bottom-left-radius: 0; /* Hard angled */
             border-bottom-right-radius: 0; /* Hard angled */
         }
@@ -351,57 +350,59 @@
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
 
-            if (Object.keys(firebaseConfig).length > 0) {
-                try {
-                    // Initialize services
-                    app = initializeApp(firebaseConfig);
-                    db = getFirestore(app);
-                    auth = getAuth(app);
-                    
-                    if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
-                    
-                    // Set up Auth State Change Listener (Must be before sign-in attempt)
-                    onAuthStateChanged(auth, async (user) => {
-                        if (user) {
-                            userId = user.uid;
-                            startDataListener(); 
-                            if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
-
-                            // Trigger validation check now that we have the userId
-                            if(createButton.checkInputStatus) createButton.checkInputStatus();
-
-                        } else {
-                            userId = null; 
-                            console.warn("User signed out or auth failed (onAuthStateChanged fired with null user).");
-                            // CRITICAL FIX: Ensure button status is checked even if user is null
-                            if(createButton.checkInputStatus) createButton.checkInputStatus();
-                        }
-                    });
-                    
-                    // CRITICAL FIX: Use async/await on sign-in attempt for clear error surfacing
-                    try {
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken);
-                            console.log("Custom Sign-in attempt successful.");
-                        } else {
-                            await signInAnonymously(auth);
-                            console.log("Anonymous Sign-in attempt successful.");
-                        }
-                    } catch (signInError) {
-                        // This block catches sign-in promise rejections.
-                        console.error("CRITICAL: Firebase Sign-in failed.", signInError);
-                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Sign-in Failed. Check console for details.</span>`;
-                        // The onAuthStateChanged listener *should* fire with null user shortly after this.
-                    }
-
-                } catch (error) {
-                    // This block catches synchronous errors during initialization (initializeApp, getFirestore, etc.)
-                    console.error("FATAL: Error during Firebase initialization:", error);
-                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Initialization failed.</span>`;
-                    showModal(createPromptModal);
-                }
-            } else {
+            // CRITICAL CHECK: Ensure config is present
+            if (Object.keys(firebaseConfig).length === 0) {
+                 console.error("CRITICAL ERROR: The required Firebase configuration variable (__firebase_config) is missing or empty.");
                  if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Firebase config missing.</span>`;
+                 return; // Halt execution if config is missing
+            }
+
+            try {
+                // Initialize services
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
+                
+                // Set up Auth State Change Listener (Must be before sign-in attempt)
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        startDataListener(); 
+                        if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
+
+                        // Trigger validation check now that we have the userId
+                        if(createButton.checkInputStatus) createButton.checkInputStatus();
+
+                    } else {
+                        userId = null; 
+                        console.warn("User signed out or auth failed (onAuthStateChanged fired with null user).");
+                        // Ensure button status is checked even if user is null
+                        if(createButton.checkInputStatus) createButton.checkInputStatus();
+                    }
+                });
+                
+                // CRITICAL FIX: Use async/await on sign-in attempt for clear error surfacing
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Custom Sign-in attempt successful.");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Anonymous Sign-in attempt successful.");
+                    }
+                } catch (signInError) {
+                    // This block catches sign-in promise rejections.
+                    console.error("CRITICAL: Firebase Sign-in failed.", signInError);
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Sign-in Failed. Check console for details.</span>`;
+                }
+
+            } catch (error) {
+                // This block catches synchronous errors during initialization (initializeApp, getFirestore, etc.)
+                console.error("FATAL: Error during Firebase initialization:", error);
+                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Initialization failed.</span>`;
+                showModal(createPromptModal);
             }
         }
         
