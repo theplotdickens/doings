@@ -30,6 +30,7 @@
             display: flex; 
             justify-content: center; 
             align-items: center;
+            /* Critical for preventing native touch scroll/zoom while dragging */
             touch-action: none; 
         }
         
@@ -90,9 +91,10 @@
         .pushpin.bottom-left { bottom: -12px; left: -12px; }
         .pushpin.bottom-right { bottom: -12px; right: -12px; }
 
+        /* Updated size to 80% (154px x 192px) */
         .size-rect-sm {
-            width: 192px; 
-            height: 240px; 
+            width: 154px; 
+            height: 192px; 
         }
 
         .prompt-modal-overlay, .zoom-modal-overlay {
@@ -292,8 +294,9 @@
         let offsetY = 0;
         let lastClickTime = 0;
 
-        const TILE_WIDTH = 192; 
-        const TILE_HEIGHT = 240; 
+        // UPDATED TILE SIZE (80% of 192x240)
+        const TILE_WIDTH = 154; 
+        const TILE_HEIGHT = 192; 
         const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
         const TILE_SIZE_CLASSES = "size-rect-sm"; 
 
@@ -369,7 +372,10 @@
                 await setDoc(tileRef, data, { merge: true });
             } catch (error) {
             } finally {
-                isSaving = false; // Clear flag after save attempts
+                // Delay clearing the flag slightly to allow the onSnapshot listener to receive the update first
+                setTimeout(() => {
+                    isSaving = false;
+                }, 50); 
             }
         }
         
@@ -467,6 +473,7 @@
         }
         
         window.zoomTile = function(tileData) {
+            // Check for drag state to prevent zoom on accidental tap/release
             if (isDragging || (Date.now() - lastClickTime < 200)) return; 
             
             zoomedImage.src = tileData.base64Image || 'https://placehold.co/800x1000/374151/ffffff?text=Image+Unavailable';
@@ -511,6 +518,7 @@
             if (!tileElement) {
                 tileElement = document.createElement('div');
                 tileElement.id = tileId;
+                // Ensure class is correctly set
                 tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} rounded-xl`; 
                 tileElement.dataset.creatorId = tileData.creatorId;
 
@@ -548,6 +556,7 @@
             
             const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
             
+            // Remove existing listeners before re-adding
             tileElement.removeEventListener('mousedown', startDrag);
             tileElement.removeEventListener('touchstart', startDrag);
 
@@ -555,7 +564,7 @@
                 if (!isUnderCooldown && sessionsLeft > 0) {
                     tileElement.style.cursor = 'grab';
                     tileElement.addEventListener('mousedown', startDrag);
-                    tileElement.addEventListener('touchstart', startDrag);
+                    tileElement.addEventListener('touchstart', startDrag, { passive: false }); // Added passive: false for touch fix
                 } else {
                     tileElement.style.cursor = 'not-allowed';
                 }
@@ -585,11 +594,12 @@
         }
 
         function startDrag(e) {
+            // Mobile Fix: Prevent default touch actions immediately
             if (e.type === 'touchstart') {
                 e.preventDefault(); 
             }
             
-            if (e.target.classList.contains('info-toggle-button')) {
+            if (e.target.classList.contains('info-toggle-button') || e.target.closest('.info-toggle-button')) {
                 return;
             }
 
@@ -600,6 +610,7 @@
             
             activeTileElement.classList.add('active-drag-state');
             
+            // Use e.clientX/Y for mouse, or the first touch point for touch
             const clientX = e.clientX || e.touches[0].clientX;
             const clientY = e.clientY || e.touches[0].clientY;
 
@@ -616,10 +627,12 @@
         function drag(e) {
             if (!isDragging) return;
 
+            // Mobile Fix: Prevent default touch actions immediately
             if (e.type === 'touchmove') {
                 e.preventDefault(); 
             }
             
+            // Use e.clientX/Y for mouse, or the first touch point for touch
             const clientX = e.clientX || e.touches[0].clientX;
             const clientY = e.clientY || e.touches[0].clientY;
             
@@ -743,7 +756,8 @@
 
             onSnapshot(tilesQuery, (snapshot) => {
                 
-                // IMPORTANT: Ignore incoming data while a tile move is being saved
+                // IMPORTANT: Ignore incoming data while *we* are saving a tile move.
+                // This prevents the data from "snapping back" due to the listener receiving old data.
                 if (isSaving) {
                     return;
                 }
