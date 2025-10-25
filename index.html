@@ -348,37 +348,44 @@
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
             
-            // Fallback ID provided by the user in case the environment fails to inject it.
+            // =========================================================================================================
+            // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK (Fixed with user's Project ID and API Key) 🚀
+            // These fallbacks are used because the environment failed to provide the full config object.
+            // =========================================================================================================
             const manualProjectIdFallback = "doings-7717f"; 
+            const manualApiKeyFallback = "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM"; // <-- API KEY INSERTED HERE
 
             try {
-                // 1. CRITICAL CONFIGURATION CHECK
-                if (!firebaseConfig.projectId) {
-                    // If project ID is missing from environment config, use the manual fallback.
-                    firebaseConfig.projectId = manualProjectIdFallback;
+                // 1. CRITICAL CONFIGURATION CHECK & FALLBACK LOGIC
+                if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
+                    // Build a complete fallback configuration
+                    firebaseConfig = {
+                        apiKey: manualApiKeyFallback,
+                        authDomain: `${manualProjectIdFallback}.firebaseapp.com`,
+                        projectId: manualProjectIdFallback,
+                        storageBucket: `${manualProjectIdFallback}.appspot.com`,
+                        // These are dummy values but required for structure
+                        messagingSenderId: "1234567890", 
+                        appId: "1:1234567890:web:1234567890abcdef",
+                    };
                     
-                    if (userStatusText) userStatusText.innerHTML = `<span class="text-yellow-600 font-bold">WARNING: Using fallback Project ID: ${manualProjectIdFallback}</span>`;
+                    let statusHtml = `Using manual configuration for Project ID and API Key.`;
+                    
+                    if (userStatusText) userStatusText.innerHTML = statusHtml;
+
+                    // If we don't even have a project ID, bail out
+                    if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
+                        console.error("Firebase config is completely missing even with fallbacks. Cannot proceed.");
+                        authReady = true; 
+                        userId = null; 
+                        hideModal(createPromptModal); 
+                        if(createButton.checkInputStatus) createButton.checkInputStatus();
+                        return;
+                    }
                 }
 
 
-                // Final check before initialization attempt
-                if (!firebaseConfig.projectId) {
-                    console.error("Firebase config is missing Project ID. Skipping initialization.");
-                    userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Database Configuration Missing. Tiles are read-only.</span>`;
-                    
-                    // Mark auth as ready (finished check) but with no user/db
-                    authReady = true; 
-                    userId = null; 
-                    
-                    // If DB fails, we assume no personal tile can be created, so we hide the modal initially
-                    hideModal(createPromptModal); 
-                    
-                    if(createButton.checkInputStatus) createButton.checkInputStatus();
-                    return;
-                }
-
-
-                // 2. Initialize services (only runs if config is valid)
+                // 2. Initialize services
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -397,7 +404,7 @@
                         userId = null; 
                         authReady = true; 
                         console.warn("User signed out or auth failed.");
-                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Sign-in Failed.</span>`;
+                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Authentication Failed. Check Console.</span>`;
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     }
                 });
