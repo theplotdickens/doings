@@ -67,18 +67,10 @@
             background-color: #ffffff;
             border-radius: 0; 
             will-change: transform;
-            cursor: pointer; /* Default cursor for view-only */
+            cursor: grab; /* All tiles are grab-able now */
         }
 
-        .draggable-tile.is-movable {
-            cursor: grab !important;
-        }
-
-        .draggable-tile.is-cooldown {
-            cursor: not-allowed !important;
-        }
-        
-        .draggable-tile:active, .draggable-tile.active-drag-state {
+        .draggable-tile.active-drag-state {
             cursor: grabbing !important;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
             z-index: 20; 
@@ -293,9 +285,6 @@
         let allTiles = new Map(); 
         let uploadedBase64Image = null; 
         
-        const MAX_DRAG_SESSIONS = 6;
-        const COOLDOWN_DURATION_MS = 60000; // 60 seconds
-        
         let isDragging = false;
         let activeTileElement = null;
         let activeTileId = null;
@@ -303,7 +292,7 @@
         let offsetY = 0;
         let lastClickTime = 0;
 
-        // UPDATED TILE SIZE (80% of 192x240)
+        // TILE SIZE (154px x 192px)
         const TILE_WIDTH = 154; 
         const TILE_HEIGHT = 192; 
         const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
@@ -383,15 +372,15 @@
             const tileRef = getTileDocRef(tileId);
             isSaving = true; // Set flag before save starts
             try {
-                const size = JSON.stringify(data.base64Image || '').length;
-                if (size > 1024 * 700) { 
-                     return;
+                // Remove large base64Image data if we are only updating position
+                const dataToSave = { ...data };
+                if (dataToSave.base64Image && dataToSave.left) {
+                    delete dataToSave.base64Image;
                 }
-                await setDoc(tileRef, data, { merge: true });
+                
+                await setDoc(tileRef, dataToSave, { merge: true });
             } catch (error) {
             } finally {
-                // Delay clearing the flag slightly to allow the server to register the change 
-                // before the listener receives a potentially stale update.
                 setTimeout(() => {
                     isSaving = false;
                 }, 50); 
@@ -534,17 +523,11 @@
             const tileId = `tile-${tileData.creatorId}`;
             let tileElement = document.getElementById(tileId);
 
-            const isUserTile = tileData.creatorId === userId;
-            const now = Date.now();
-            const lastMove = tileData.lastMoveTime || 0;
-            const sessionsLeft = tileData.dragSessionsLeft || 0;
-            const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
-
             if (!tileElement) {
                 tileElement = document.createElement('div');
                 tileElement.id = tileId;
-                // Ensure class is correctly set
-                tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} rounded-xl`; 
+                // All tiles are now permanently grab-able (is-movable class is now redundant, but kept for clarity)
+                tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} rounded-xl is-movable`; 
                 tileElement.dataset.creatorId = tileData.creatorId;
 
                 tileElement.innerHTML = `
@@ -570,17 +553,7 @@
                 canvasContainer.appendChild(tileElement);
             }
 
-            // Update state classes for cursor based on tile data
-            tileElement.classList.remove('is-movable', 'is-cooldown');
-            if (isUserTile) {
-                if (isUnderCooldown) {
-                    tileElement.classList.add('is-cooldown');
-                } else if (sessionsLeft > 0) {
-                    tileElement.classList.add('is-movable');
-                }
-            }
-
-
+            // Update state classes (no need for is-cooldown or is-movable logic)
             tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
             tileElement.style.left = tileData.left || '0px';
             tileElement.style.top = tileData.top || '0px';
@@ -606,24 +579,12 @@
             allTiles.forEach((data) => createTileElement(data));
         }
 
-        // --- DRAG LOGIC REFACTORED USING EVENT DELEGATION AND UNIFIED COORDINATES ---
+        // --- DRAG LOGIC REFACTORED FOR UNIVERSAL MOVEMENT ---
 
         function setupDragEvents() {
             // Delegated start events on the container
             canvasContainer.addEventListener('mousedown', delegatedStartDrag);
             canvasContainer.addEventListener('touchstart', delegatedStartDrag, { passive: false });
-        }
-
-        function isTileMovable(tileId) {
-            const tileData = allTiles.get(tileId);
-            if (!tileData || tileData.creatorId !== userId) return false;
-            
-            const now = Date.now();
-            const lastMove = tileData.lastMoveTime || 0;
-            const sessionsLeft = tileData.dragSessionsLeft || 0;
-            const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
-
-            return sessionsLeft > 0 && !isUnderCooldown;
         }
 
         function delegatedStartDrag(e) {
@@ -639,10 +600,7 @@
 
             const creatorId = targetTile.dataset.creatorId;
 
-            // Check if this tile is movable by the current user
-            if (!isTileMovable(creatorId)) {
-                return;
-            }
+            // Since any tile can be moved by anyone, we skip any permission check.
 
             // Mobile Fix: Prevent default touch actions immediately to start drag
             if (e.type === 'touchstart') {
@@ -659,6 +617,7 @@
             const { clientX, clientY } = getClientCoords(e);
 
             const rect = activeTileElement.getBoundingClientRect();
+            // Calculate offset relative to the tile's current position
             offsetX = clientX - rect.left;
             offsetY = clientY - rect.top;
 
@@ -682,6 +641,7 @@
             
             const containerRect = canvasContainer.getBoundingClientRect();
 
+            // Calculate new position relative to the container
             let newLeft = clientX - containerRect.left - offsetX;
             let newTop = clientY - containerRect.top - offsetY;
 
@@ -689,6 +649,7 @@
             const tileHeight = TILE_HEIGHT;
             const PIN_OFFSET = 12;
 
+            // Apply boundaries
             const maxLeft = containerRect.width - tileWidth - PIN_OFFSET;
             const maxTop = containerRect.height - tileHeight - PIN_OFFSET;
             
@@ -717,6 +678,7 @@
                 const newLeftPx = parseFloat(activeTileElement.style.left);
                 const newTopPx = parseFloat(activeTileElement.style.top);
 
+                // Collision Check (still important for clean placement)
                 if (checkCollision(activeTileId, newLeftPx, newTopPx)) {
                     const currentTileData = allTiles.get(activeTileId);
                     if (currentTileData) {
@@ -733,20 +695,14 @@
                 if (currentTileData) {
                     const now = Date.now();
                     
-                    const newDragSessionsLeft = (currentTileData.dragSessionsLeft || MAX_DRAG_SESSIONS) - 1;
-
                     const updatedData = {
-                        ...currentTileData,
+                        creatorId: activeTileId, // Important to ensure we save the right document
                         left: `${newLeftPx}px`,
                         top: `${newTopPx}px`,
-                        lastMoveTime: now,
-                        dragSessionsLeft: newDragSessionsLeft,
-                        ...(newDragSessionsLeft <= 0 ? { 
-                            lastMoveTime: now
-                        } : {})
+                        lastMoveTime: now, // Keep for logging the last movement time
                     };
 
-                    allTiles.set(activeTileId, updatedData);
+                    // Only update the position/time fields
                     await saveTile(updatedData);
                 }
 
@@ -815,8 +771,11 @@
                     if (!creatorId) return;
 
                     if (change.type === "added" || change.type === "modified") {
-                        allTiles.set(creatorId, tileData);
-                        createTileElement(tileData);
+                        // Merge the incoming data to ensure we have the full image base64, even if only position was sent
+                        const existingData = allTiles.get(creatorId) || {};
+                        allTiles.set(creatorId, { ...existingData, ...tileData });
+
+                        createTileElement(allTiles.get(creatorId));
                         
                         if (creatorId === userId) {
                             hideModal(createPromptModal);
@@ -830,6 +789,7 @@
                     }
                 });
                 
+                // Show prompt if the current user doesn't have a tile yet
                 if (authReady && !allTiles.has(userId)) {
                     createPromptModal.classList.remove('hidden');
                 } else if (authReady && allTiles.has(userId)) {
@@ -895,6 +855,7 @@
             const { width, height } = getCurrentTileDimensions();
             const initialPos = findSafeInitialPosition(width, height);
             
+            // Only send the base64Image on initial creation
             const newTileData = {
                 creatorId: userId,
                 name: name,
@@ -902,7 +863,6 @@
                 left: initialPos.left,
                 top: initialPos.top,
                 createdAt: new Date().toISOString().substring(0, 10),
-                dragSessionsLeft: MAX_DRAG_SESSIONS,
             };
 
             await saveTile(newTileData);
