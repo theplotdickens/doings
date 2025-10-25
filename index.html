@@ -22,7 +22,7 @@
              width: 100%;
              height: 100%;
         }
-        /* UPDATED: Hard angled corners */
+        /* Hard angled corners */
         .draggable-tile {
             position: absolute;
             user-select: none;
@@ -32,7 +32,7 @@
             background-size: cover;
             background-position: center;
             background-color: #3b82f6; /* Fallback blue */
-            border-radius: 0; /* REMOVED rounded corners */
+            border-radius: 0; 
         }
         /* Visual feedback for when the tile is actively being dragged */
         .draggable-tile:active, .draggable-tile.active-drag-state {
@@ -81,9 +81,9 @@
             opacity: 0;
             transform: translateY(100%); /* Start off-screen */
             transition: opacity 0.3s ease, transform 0.3s ease;
-            z-index: 15; /* Above default tile content but below button */
-            border-bottom-left-radius: 0; /* Hard angled */
-            border-bottom-right-radius: 0; /* Hard angled */
+            z-index: 15; 
+            border-bottom-left-radius: 0; 
+            border-bottom-right-radius: 0; 
         }
         .info-tag.visible {
             opacity: 1;
@@ -92,21 +92,21 @@
         }
         .info-toggle-button {
             position: absolute;
-            bottom: 0px; /* Adjusted to sit at the very bottom edge */
-            right: 0px; /* Adjusted to sit at the very right edge */
-            background-color: rgba(60, 60, 60, 0.8); /* Darker gray for contrast */
+            bottom: 0px; 
+            right: 0px; 
+            background-color: rgba(60, 60, 60, 0.8); 
             color: white;
             border: none;
-            width: 30px; /* Square button */
-            height: 30px; /* Square button */
+            width: 30px; 
+            height: 30px; 
             display: flex;
             justify-content: center;
             align-items: center;
-            font-size: 1.25rem; /* text-xl */
+            font-size: 1.25rem; 
             cursor: pointer;
-            z-index: 25; /* Always on top */
-            border-top-left-radius: 0; /* Hard angled */
-            border-bottom-right-radius: 0; /* Hard angled */
+            z-index: 25; 
+            border-top-left-radius: 0; 
+            border-bottom-right-radius: 0; 
             transition: background-color 0.2s ease;
         }
         .info-toggle-button:hover {
@@ -116,6 +116,13 @@
 </head>
 <body onresize="renderAllTiles()">
     
+    <!-- CRITICAL ERROR BANNER (Hidden by default) -->
+    <div id="critical-error-banner" class="fixed top-0 left-0 right-0 bg-red-700 text-white p-3 text-center font-semibold text-sm z-50 shadow-2xl hidden">
+        <p class="font-bold text-lg mb-1">SHARING DISABLED: CRITICAL ERROR</p>
+        <p>The application is missing necessary credentials from the environment. Your tile will NOT be saved or shared with others.</p>
+        <p class="mt-1">Please refresh or notify support that **`__firebase_config`** is missing.</p>
+    </div>
+
     <!-- Main container for all draggable tiles -->
     <section id="canvas-container"></section>
 
@@ -160,7 +167,7 @@
     </div>
     
     <script type="module">
-        // --- Firebase Imports ---
+        // --- Firebase Imports (Required for structure, even if unused due to error) ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
@@ -171,6 +178,8 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+        
+        let isDatabaseAvailable = true; // Assume true until we check config
         // =========================================================================================================
 
         
@@ -184,6 +193,7 @@
         const canvasContainer = document.getElementById('canvas-container');
         const createPromptModal = document.getElementById('input-prompt-modal');
         const userStatusText = document.getElementById('user-status-text');
+        const errorBanner = document.getElementById('critical-error-banner');
         
         let allTiles = new Map(); 
         let uploadedBase64Image = null; // Stores the image data for the new tile
@@ -231,22 +241,31 @@
             const tileId = data.creatorId || userId;
             if (!tileId) return console.error("Cannot save tile: missing ID.");
 
+            // CRITICAL CHECK: If DB is not initialized, we cannot save online.
+            if (!isDatabaseAvailable) {
+                 errorBanner.classList.remove('hidden');
+                 console.error("FATAL: Cannot save tile. Database connection is down due to missing configuration.");
+                 return; // Stop execution, don't save locally or proceed.
+            }
+
             const tileRef = getTileDocRef(tileId);
             if (tileRef) {
                 try {
                     await setDoc(tileRef, data, { merge: true });
                 } catch (error) {
-                    console.error("Error saving tile data:", error);
+                    console.error("Error saving tile data to Firestore:", error);
+                    // If a runtime error occurs while saving (e.g., security rules), show a less severe warning
+                    errorBanner.textContent = "WARNING: Failed to save tile data online. Check console.";
+                    errorBanner.classList.remove('hidden');
                 }
             } else {
-                 console.warn("Save requested, but no valid db connection.");
+                 console.warn("Save requested, but database reference is null. DB is likely down.");
+                 errorBanner.classList.remove('hidden');
             }
         }
         
         /**
          * Converts a File object to a Base64 string using FileReader.
-         * @param {File} file - The image file to convert.
-         * @returns {Promise<string>} - The Base64 data URL.
          */
         function fileToBase64(file) {
             return new Promise((resolve, reject) => {
@@ -329,7 +348,7 @@
                 window.renderAllTiles();
                 
                 // Show prompt if the user is authenticated but hasn't created a tile yet.
-                if (userId && !allTiles.has(userId)) {
+                if (userId && !allTiles.has(userId) && isDatabaseAvailable) {
                     showModal(createPromptModal);
                 } else {
                     hideModal(createPromptModal);
@@ -338,23 +357,34 @@
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
                 // If there's an error, assume the user might not have a tile and show the modal
-                if (userId && !allTiles.has(userId)) {
+                if (userId && !allTiles.has(userId) && isDatabaseAvailable) {
                     showModal(createPromptModal);
                 }
             });
         }
         
         /**
-         * Initializes Firebase and starts Auth immediately on load.
+         * Initializes Firebase and starts Auth immediately on load, or sets error state.
          */
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
 
-            // CRITICAL CHECK: Ensure config is present
+            // CRITICAL CHECK: Determine if config is present
             if (Object.keys(firebaseConfig).length === 0) {
-                 console.error("CRITICAL ERROR: The required Firebase configuration variable (__firebase_config) is missing or empty.");
-                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Firebase config missing.</span>`;
-                 return; // Halt execution if config is missing
+                 isDatabaseAvailable = false;
+                 
+                 // Use a dummy userId so the button can be enabled for input testing.
+                 userId = 'USER_ID_UNAVAILABLE'; 
+                 
+                 console.error("CRITICAL ERROR: The required Firebase configuration variable (__firebase_config) is missing or empty. Disabling DB access.");
+                 
+                 // Update UI to reflect failure
+                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">AUTH FAILED: Config Missing.</span>`;
+                 errorBanner.classList.remove('hidden');
+
+                 // Trigger validation check now that we have a dummy userId
+                 if(createButton.checkInputStatus) createButton.checkInputStatus();
+                 return; // HALT Firebase initialization
             }
 
             try {
@@ -365,25 +395,22 @@
                 
                 if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
                 
-                // Set up Auth State Change Listener (Must be before sign-in attempt)
+                // Set up Auth State Change Listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
                         startDataListener(); 
                         if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
 
-                        // Trigger validation check now that we have the userId
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
-
                     } else {
                         userId = null; 
                         console.warn("User signed out or auth failed (onAuthStateChanged fired with null user).");
-                        // Ensure button status is checked even if user is null
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     }
                 });
                 
-                // CRITICAL FIX: Use async/await on sign-in attempt for clear error surfacing
+                // Sign-in attempt
                 try {
                     if (initialAuthToken) {
                         await signInWithCustomToken(auth, initialAuthToken);
@@ -393,15 +420,17 @@
                         console.log("Anonymous Sign-in attempt successful.");
                     }
                 } catch (signInError) {
-                    // This block catches sign-in promise rejections.
                     console.error("CRITICAL: Firebase Sign-in failed.", signInError);
                     if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Sign-in Failed. Check console for details.</span>`;
                 }
 
             } catch (error) {
-                // This block catches synchronous errors during initialization (initializeApp, getFirestore, etc.)
+                // Catches synchronous errors during initialization
+                isDatabaseAvailable = false;
+                userId = 'INIT_FAILED';
                 console.error("FATAL: Error during Firebase initialization:", error);
                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Initialization failed.</span>`;
+                errorBanner.classList.remove('hidden');
                 showModal(createPromptModal);
             }
         }
@@ -409,6 +438,12 @@
         // --- Drag Handlers ---
         
         function handleDragStart(e) {
+            // Block drag if DB is down, as we can't update positions
+            if (!isDatabaseAvailable) {
+                 errorBanner.classList.remove('hidden');
+                 return;
+            }
+
             const tileElement = e.currentTarget;
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
@@ -474,23 +509,27 @@
             // Remove active state class
             if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
             
-            // Only save if a move is authorized
-            if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
-                
-                const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
-                let newRestrictionEndTime = tileData.moveRestrictionEndTime;
-                
-                if (newMovesMade >= MAX_DRAG_SESSIONS) {
-                    newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
-                }
+            // Only save if a move is authorized AND DB is available
+            if (isDatabaseAvailable) {
+                if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
+                    
+                    const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
+                    let newRestrictionEndTime = tileData.moveRestrictionEndTime;
+                    
+                    if (newMovesMade >= MAX_DRAG_SESSIONS) {
+                        newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
+                    }
 
-                saveTile({
-                    creatorId: activeTileId, 
-                    movesMade: newMovesMade,
-                    moveRestrictionEndTime: newRestrictionEndTime,
-                    left: activeTileElement.style.left,
-                    top: activeTileElement.style.top,
-                });
+                    saveTile({
+                        creatorId: activeTileId, 
+                        movesMade: newMovesMade,
+                        moveRestrictionEndTime: newRestrictionEndTime,
+                        left: activeTileElement.style.left,
+                        top: activeTileElement.style.top,
+                    });
+                }
+            } else {
+                 errorBanner.classList.remove('hidden');
             }
             
             isDragging = false;
@@ -517,7 +556,6 @@
                 tileElement = document.createElement('div');
                 tileElement.id = domId;
                 tileElement.dataset.tileId = tileId;
-                // REMOVED rounded-xl class, now just plain `draggable-tile`
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
             }
@@ -534,7 +572,6 @@
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
             // Use centralized class constants for size
-            // Ensure tileElement.className is correctly set to include base classes
             tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
 
             // Set background image style - FIX: Ensure this is always applied
@@ -606,7 +643,7 @@
             }
 
             // Dragging logic
-            if (isMyTile && !isRestricted) {
+            if (isMyTile && !isRestricted && isDatabaseAvailable) {
                 // Attach event listeners for drag/touch start
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
@@ -629,8 +666,8 @@
                 }
             }
             
-            // Cooldown Interval Logic (remains the same)
-            if (isMyTile && isRestricted) {
+            // Cooldown Interval Logic (only runs if DB is available)
+            if (isDatabaseAvailable && isMyTile && isRestricted) {
                 if (cooldownIntervalId) clearInterval(cooldownIntervalId);
                 
                 const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
@@ -660,9 +697,12 @@
                  clearInterval(cooldownIntervalId);
                  tileElement.dataset.cooldownInterval = '0';
             }
-
-            tileElement.style.left = tileData.left; 
-            tileElement.style.top = tileData.top; 
+            
+            // CRITICAL: Ensure tiles are visible even if DB is unavailable, but only if they were added.
+            if(tileData.left && tileData.top) {
+                tileElement.style.left = tileData.left; 
+                tileElement.style.top = tileData.top; 
+            }
         }
 
         window.renderAllTiles = function() {
@@ -699,14 +739,15 @@
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; 
-                const authReady = userId !== null; // Check for authenticated user ID
                 
-                // CRITICAL FIX: Only enable if all three conditions are met.
-                createButton.disabled = !(nameValid && imageValid && authReady);
+                // Button is enabled if name and image are valid, regardless of DB availability (to unblock user)
+                createButton.disabled = !(nameValid && imageValid);
                 
-                if (nameValid && imageValid && !authReady) {
-                    // This is the state where everything is ready except auth.
-                    if (userStatusText) userStatusText.innerHTML = `Please wait, confirming identity...`;
+                // Show status for authenticated user or error status
+                if (!isDatabaseAvailable) {
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">AUTH FAILED: Config Missing. Button is enabled for testing, but SAVE/SHARE will fail.</span>`;
+                } else if (userId) {
+                    if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
                 }
             };
 
@@ -725,13 +766,11 @@
                     return;
                 }
                 
-                // Show loading state immediately
                 imagePreviewElement.textContent = 'Loading...';
                 imagePreviewElement.style.backgroundImage = 'none';
 
                 try {
                     uploadedBase64Image = await fileToBase64(file);
-                    // Update preview style
                     imagePreviewElement.style.backgroundImage = `url('${uploadedBase64Image}')`;
                     imagePreviewElement.textContent = '';
                     
@@ -742,7 +781,7 @@
                     imagePreviewElement.textContent = 'Error';
                 }
                 
-                checkCreateInput(); // Final state check after image conversion
+                checkCreateInput(); 
             });
 
             // Ensure checkCreateInput is called on every input event for name
@@ -753,22 +792,21 @@
             checkCreateInput(); 
 
 
-            const createNewTile = () => {
+            const createNewTile = async () => {
                 const name = createNameInput.value.trim();
                 
-                // Final checks before submission
-                if (!name || !uploadedBase64Image) {
-                    // Should be blocked by button.disabled, but safe check anyway
-                    console.warn("Cannot create tile: Name or Image missing.");
-                    return;
-                }
-                if (!userId) {
-                    console.error("Critical Error: Clicked enabled button but userId is null. Auth failed.");
-                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: AUTH FAILED. Please refresh.</span>`;
+                if (!name || !uploadedBase64Image || !userId) {
+                    console.warn("Cannot create tile: Inputs or user ID missing.");
                     return;
                 }
                 
-                console.log(`Successfully creating tile for user: ${userId}`);
+                // If DB is NOT available, we show the critical error and stop.
+                if (!isDatabaseAvailable) {
+                     errorBanner.classList.remove('hidden');
+                     return; 
+                }
+
+                console.log(`Successfully attempting to create and save tile for user: ${userId}`);
 
                 // Proceed with creation
                 hideModal(createPromptModal);
@@ -779,14 +817,14 @@
                     day: 'numeric' 
                 });
                 
-                const { width, height } = window.getCurrentTileDimensions(); // Get current dimensions
+                const { width, height } = window.getCurrentTileDimensions(); 
                 const initialLeft = `${(window.innerWidth / 2) - (width / 2)}px`;
                 const initialTop = `${(window.innerHeight / 2) - (height / 2)}px`;
                 
                 const newTileData = {
                     creatorId: userId, 
                     name: name,
-                    base64Image: uploadedBase64Image, // Store image data
+                    base64Image: uploadedBase64Image, 
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
@@ -794,7 +832,7 @@
                     moveRestrictionEndTime: 0,
                 };
                 
-                saveTile(newTileData);
+                await saveTile(newTileData); // Use await to catch potential sync/async errors
             };
 
             // Event Listeners for the button
