@@ -18,11 +18,9 @@
         body {
             font-family: 'Inter', sans-serif;
             
-            /* Tiling Background Texture on the outer body */
-            background-color: #f0f3f6; 
-            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
-            background-repeat: repeat;
-            background-size: 200px 200px; 
+            /* Body now uses a solid dark color to contrast the tiled viewport on desktop */
+            background-color: #333; 
+            background-image: none; 
             
             height: 100vh;
             overflow: hidden; 
@@ -40,8 +38,11 @@
             max-width: 420px;
             height: 100vh;
             
-            /* Background removed to show the tiling pattern underneath */
-            background-color: transparent; 
+            /* Tiling Background Texture moved here to be visible on both desktop (centered) and mobile (fullscreen) */
+            background-color: #f0f3f6; 
+            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
+            background-repeat: repeat;
+            background-size: 200px 200px;
             
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
             overflow: hidden;
@@ -62,7 +63,7 @@
             background-size: contain; 
             background-repeat: no-repeat;
             background-position: center;
-            background-color: #ffffff; /* Neutral white background for tile */
+            background-color: #ffffff;
             border-radius: 0; 
             will-change: transform;
         }
@@ -318,8 +319,8 @@
                                 height = Math.round(height * (MAX_DIMENSION / width));
                                 width = MAX_DIMENSION;
                             } else {
-                                width = Math.round(width * (MAX_DIMENSION / height));
                                 height = MAX_DIMENSION;
+                                width = Math.round(width * (MAX_DIMENSION / height));
                             }
                         }
 
@@ -541,10 +542,8 @@
             const lastMove = tileData.lastMoveTime || 0;
             const sessionsLeft = tileData.dragSessionsLeft || 0;
             
-            // Tile is only under cooldown if it has been moved before (lastMove > 0) AND sessions are depleted
             const isUnderCooldown = sessionsLeft <= 0 && lastMove > 0 && now < lastMove + COOLDOWN_DURATION_MS;
             
-            // Remove previous listeners to ensure proper re-attachment based on new state
             tileElement.removeEventListener('mousedown', startDrag);
             tileElement.removeEventListener('touchstart', startDrag);
 
@@ -694,7 +693,6 @@
         }
         
         async function initializeFirebase() {
-            // Internal fallbacks removed for cleanliness
             if (!firebaseConfig.projectId) {
                 firebaseConfig = {
                     apiKey: "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM",
@@ -834,7 +832,7 @@
                 left: initialPos.left,
                 top: initialPos.top,
                 createdAt: new Date().toISOString().substring(0, 10),
-                dragSessionsLeft: MAX_DRAG_SESSIONS, // Ready for first drag
+                dragSessionsLeft: MAX_DRAG_SESSIONS,
             };
 
             await saveTile(newTileData);
