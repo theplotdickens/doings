@@ -38,10 +38,9 @@
         .draggable-tile {
             position: absolute;
             user-select: none;
-            cursor: grab;
+            /* Note: Cursor changes via JS based on drag eligibility */
             transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
-            /* This is critical for mobile image stability: ensure background image fits */
             background-size: contain; 
             background-repeat: no-repeat;
             background-position: center;
@@ -62,12 +61,11 @@
             position: absolute;
             width: 24px; 
             height: 24px;
-            /* Using the raw link for the requested pin%20png.png file */
             background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/pin%20png.png');
             background-size: cover;
             background-repeat: no-repeat;
-            z-index: 21; /* Ensure pins are above the tile */
-            pointer-events: none; /* Pins should not interfere with dragging the tile */
+            z-index: 21; 
+            pointer-events: none; /* Allows click to pass through to the tile body */
         }
         /* Offset by half the width/height to center the pin on the corner */
         .pushpin.top-left { top: -12px; left: -12px; }
@@ -76,7 +74,7 @@
         .pushpin.bottom-right { bottom: -12px; right: -12px; }
         /* --- END PUSHPIN STYLING --- */
 
-        /* --- CONSISTENT SIZE DEFINITION (Now universal for all devices) --- */
+        /* --- CONSISTENT SIZE DEFINITION (Universal) --- */
         .size-rect-sm {
             width: 192px; 
             height: 240px; 
@@ -95,8 +93,51 @@
             overflow-y: auto; 
             padding: 20px 0;
         }
-
         
+        /* --- NEW ZOOM MODAL STYLES --- */
+        .zoom-modal-overlay {
+            position: fixed; 
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.95); /* Darker backdrop for focus */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 50; /* Highest Z-index */
+            transition: opacity 0.3s ease-in-out;
+            cursor: pointer; /* Indicates clicking the backdrop will dismiss it */
+        }
+        .zoomed-content-wrapper {
+            max-width: 95%;
+            max-height: 95%;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none; /* Allows click to pass through to the overlay */
+        }
+        .zoomed-image-style {
+            width: auto;
+            max-width: 100%;
+            height: auto;
+            max-height: 80vh; /* Max height to leave space for info */
+            object-fit: contain;
+            border-radius: 0.5rem;
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.2);
+            pointer-events: none; /* Image itself shouldn't close the modal */
+        }
+        .zoomed-info-style {
+            margin-top: 1rem;
+            text-align: center;
+            color: white;
+            padding: 0.5rem 1rem;
+            background-color: rgba(0, 0, 0, 0.5);
+            border-radius: 0.5rem;
+            pointer-events: none;
+        }
+        /* --- END NEW ZOOM MODAL STYLES --- */
+
         .info-tag {
             position: absolute;
             bottom: 0;
@@ -117,7 +158,7 @@
         .info-tag.visible {
             opacity: 1;
             transform: translateY(0); 
-            pointer-events: auto; 
+            pointer-events: auto; /* Allows interaction when visible */
         }
         .info-toggle-button {
             position: absolute;
@@ -187,11 +228,27 @@
         </div>
     </div>
     
+    <!-- NEW: FULL-SCREEN ZOOM MODAL OVERLAY -->
+    <div id="zoom-modal" class="zoom-modal-overlay hidden opacity-0" role="dialog" aria-modal="true">
+        <div class="zoomed-content-wrapper" onclick="event.stopPropagation()">
+            <img id="zoomed-image" src="" alt="Zoomed image content" class="zoomed-image-style"/>
+            <div id="zoomed-info" class="zoomed-info-style"></div>
+        </div>
+        <!-- Dismiss Button -->
+        <button onclick="window.closeZoom()" 
+                class="absolute top-4 right-4 text-white hover:text-gray-300 text-4xl p-2 rounded-full transition duration-150" 
+                aria-label="Close zoomed view">
+            &times;
+        </button>
+    </div>
+    
     <script type="module">
         // --- Firebase Imports (Required for structure) ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, onSnapshot, setDoc, collection, query, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        setLogLevel('Debug');
 
         // =========================================================================================================
         // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK 🚀
@@ -216,6 +273,11 @@
         const createPromptModal = document.getElementById('input-prompt-modal');
         const userStatusText = document.getElementById('user-status-text');
         
+        // Zoom elements
+        const zoomModal = document.getElementById('zoom-modal');
+        const zoomedImage = document.getElementById('zoomed-image');
+        const zoomedInfo = document.getElementById('zoomed-info');
+        
         let allTiles = new Map(); 
         let uploadedBase64Image = null; 
         
@@ -229,20 +291,18 @@
         let activeTileId = null;
         let offsetX = 0;
         let offsetY = 0;
-        
+        let lastClickTime = 0; // Tracks when a drag ended to prevent immediate zoom
+
         // NEW SIZE CONSTANTS (4:5 Portrait Ratio, universally small)
         const TILE_WIDTH = 192; 
         const TILE_HEIGHT = 240; 
-        
         const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
-        // Only use the small size class universally
         const TILE_SIZE_CLASSES = "size-rect-sm"; 
 
         // --- Utility Functions ---
         
         /**
-         * Resizes and compresses an image file using canvas to ensure it stays
-         * well under the 1MB Firestore document limit.
+         * Resizes and compresses an image file using canvas.
          */
         function resizeAndCompressImage(file) {
             return new Promise((resolve, reject) => {
@@ -291,8 +351,7 @@
         }
 
         /**
-         * Returns the current tile dimensions based on viewport size.
-         * Now returns the universal small size.
+         * Returns the current tile dimensions (now fixed for responsiveness).
          */
         window.getCurrentTileDimensions = function() {
             return { width: TILE_WIDTH, height: TILE_HEIGHT };
@@ -328,15 +387,10 @@
         
         /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
-         * The collision check is now padded to ensure the pushpins do not overlap.
          */
         function checkCollision(targetId, newLeft, newTop) {
-            // Use the single fixed size
             const { width: targetW, height: targetH } = { width: TILE_WIDTH, height: TILE_HEIGHT }; 
-            
-            // Define the padding necessary to include the pushpins in the collision box. 
-            // The pins extend 12px out from the corner.
-            const PIN_OFFSET = 12; 
+            const PIN_OFFSET = 12; // Pins extend 12px out
 
             // Calculate the padded bounding box for the target tile (including pins)
             const paddedNewLeft = newLeft - PIN_OFFSET;
@@ -350,11 +404,9 @@
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
-                // Since all tiles now have the same fixed size
                 const otherW = TILE_WIDTH; 
                 const otherH = TILE_HEIGHT;
                 
-                // Get position from the element's style property
                 let otherLeft = parseFloat(otherElement.style.left);
                 let otherTop = parseFloat(otherElement.style.top);
                 
@@ -368,7 +420,6 @@
                 const paddedOtherTop = otherTop - PIN_OFFSET;
                 const paddedOtherRight = otherLeft + otherW + PIN_OFFSET;
                 const paddedOtherBottom = otherTop + otherH + PIN_OFFSET;
-
 
                 // Check for overlap using padded bounds
                 const overlapsX = paddedNewLeft < paddedOtherRight && paddedTargetRight > paddedOtherLeft;
@@ -388,17 +439,17 @@
             const viewportW = window.innerWidth;
             const viewportH = window.innerHeight;
             
-            // Use padded dimensions for positioning check to respect the pins
-            const paddedTileWidth = tileWidth + 24; 
-            const paddedTileHeight = tileHeight + 24; 
+            // Use padded dimensions for positioning check to respect the pins (24px padding = 12px pin offset)
+            const PIN_OFFSET = 12;
+            const PADDED_CHECK_SIZE = PIN_OFFSET * 2; 
 
             // Calculate exact center position
             let initialLeft = Math.round((viewportW / 2) - (tileWidth / 2));
             let initialTop = Math.round((viewportH / 2) - (tileHeight / 2));
             
             // Ensure initial position isn't too close to screen edges (respecting pins)
-            initialLeft = Math.max(12, Math.min(initialLeft, viewportW - tileWidth - 12));
-            initialTop = Math.max(12, Math.min(initialTop, viewportH - tileHeight - 12));
+            initialLeft = Math.max(PIN_OFFSET, Math.min(initialLeft, viewportW - tileWidth - PIN_OFFSET));
+            initialTop = Math.max(PIN_OFFSET, Math.min(initialTop, viewportH - tileHeight - PIN_OFFSET));
 
 
             // Start simple non-overlapping check at center
@@ -412,74 +463,32 @@
 
             let offset = step; // Start spiral at the first layer out
 
-            // Spiral search pattern: 1R, 1U, 2L, 2D, 3R, 3U, 4L, 4D...
+            // Spiral search pattern: Check positions around the center
             while (offset <= maxOffset) {
                 
-                // 1. Right side check (x=offset, y runs -offset to offset)
-                for (let y = -offset; y <= offset; y += step) {
-                    let x = offset;
-                    let checkLeft = initialLeft + x;
-                    let checkTop = initialTop + y;
-                    
-                    // Boundary check using padded dimensions
-                    if (checkLeft >= 12 && checkTop >= 12 && 
-                        checkLeft + tileWidth <= viewportW - 12 && 
-                        checkTop + tileHeight <= viewportH - 12) {
-                        if (!checkCollision(null, checkLeft, checkTop)) {
-                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
-                        }
-                    }
-                }
-                
-                // 2. Left side check (x=-offset, y runs -offset to offset)
-                for (let y = -offset; y <= offset; y += step) {
-                    let x = -offset;
-                    let checkLeft = initialLeft + x;
-                    let checkTop = initialTop + y;
-                    
-                    if (checkLeft >= 12 && checkTop >= 12 && 
-                        checkLeft + tileWidth <= viewportW - 12 && 
-                        checkTop + tileHeight <= viewportH - 12) {
-                        if (!checkCollision(null, checkLeft, checkTop)) {
-                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
-                        }
-                    }
-                }
+                // Check all points on the square boundary defined by 'offset'
+                for (let x = -offset; x <= offset; x += step) {
+                    for (let y = -offset; y <= offset; y += step) {
+                        if (Math.abs(x) < offset && Math.abs(y) < offset) continue; // Skip inner area (already checked)
+                        if (Math.abs(x) !== offset && Math.abs(y) !== offset) continue; // Skip non-edge points
 
-                // 3. Top side check (y=-offset, x runs -offset+step to offset-step)
-                for (let x = -offset + step; x < offset; x += step) {
-                    let y = -offset;
-                    let checkLeft = initialLeft + x;
-                    let checkTop = initialTop + y;
-                    
-                    if (checkLeft >= 12 && checkTop >= 12 && 
-                        checkLeft + tileWidth <= viewportW - 12 && 
-                        checkTop + tileHeight <= viewportH - 12) {
-                        if (!checkCollision(null, checkLeft, checkTop)) {
-                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                        let checkLeft = initialLeft + x;
+                        let checkTop = initialTop + y;
+                        
+                        // Boundary check using padded dimensions
+                        if (checkLeft >= PIN_OFFSET && checkTop >= PIN_OFFSET && 
+                            checkLeft + tileWidth <= viewportW - PIN_OFFSET && 
+                            checkTop + tileHeight <= viewportH - PIN_OFFSET) {
+                            if (!checkCollision(null, checkLeft, checkTop)) {
+                                return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                            }
                         }
                     }
                 }
-                
-                // 4. Bottom side check (y=offset, x runs -offset+step to offset-step)
-                for (let x = -offset + step; x < offset; x += step) {
-                    let y = offset;
-                    let checkLeft = initialLeft + x;
-                    let checkTop = initialTop + y;
-                    
-                    if (checkLeft >= 12 && checkTop >= 12 && 
-                        checkLeft + tileWidth <= viewportW - 12 && 
-                        checkTop + tileHeight <= viewportH - 12) {
-                        if (!checkCollision(null, checkLeft, checkTop)) {
-                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
-                        }
-                    }
-                }
-
                 offset += step; // Expand the search radius
             }
             
-            // Fallback: If no space is found after extensive searching, return the initial center position
+            // Fallback: Return the initial center position if no safe spot is found
             return { left: `${initialLeft}px`, top: `${initialTop}px` };
         }
         
@@ -487,6 +496,60 @@
         
         function hideModal(modal) {
             modal.classList.add('hidden');
+        }
+        
+        // --- Zoom Modal Logic (Fix applied here) ---
+        
+        /**
+         * Zooms a tile to full screen using the modal.
+         */
+        window.zoomTile = function(tileData) {
+            // Prevent zoom if the click/tap was part of a drag motion (this prevents drag-to-zoom)
+            if (isDragging || (Date.now() - lastClickTime < 200)) return; 
+            
+            zoomedImage.src = tileData.base64Image || 'https://placehold.co/800x1000/374151/ffffff?text=Image+Unavailable';
+            
+            // Set descriptive info
+            zoomedInfo.innerHTML = `
+                <h2 class="text-3xl font-bold text-white mb-2">${tileData.name}'s Tile</h2>
+                <p class="text-gray-300">Created: ${tileData.createdAt || 'Unknown Date'}</p>
+                <p class="text-gray-400 text-sm mt-1">Owner ID: ${tileData.creatorId}</p>
+            `;
+
+            // Show modal with transition
+            zoomModal.classList.remove('hidden');
+            // Allow 10ms for reflow before applying opacity transition
+            setTimeout(() => {
+                zoomModal.classList.remove('opacity-0');
+            }, 10);
+        }
+
+        /**
+         * Closes the zoom modal.
+         */
+        window.closeZoom = function() {
+            zoomModal.classList.add('opacity-0');
+            // Wait for transition before hiding
+            setTimeout(() => {
+                zoomModal.classList.add('hidden');
+                zoomedImage.src = ''; 
+            }, 300);
+        }
+        
+        // Attach close handler to the modal backdrop
+        if (zoomModal) {
+            zoomModal.addEventListener('click', (e) => {
+                // Only close if the click is on the backdrop itself (the overlay)
+                if (e.target === zoomModal) {
+                    window.closeZoom();
+                }
+            });
+            // ESC key closes the modal
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && !zoomModal.classList.contains('hidden')) {
+                    window.closeZoom();
+                }
+            });
         }
         
         // --- Data Listener and Auth Setup ---
@@ -688,6 +751,7 @@
             isDragging = false;
             activeTileElement = null; 
             activeTileId = null;
+            lastClickTime = Date.now(); // Register the end of the interaction for zoom prevention
         }
 
         // Attach global drag listeners
@@ -699,7 +763,7 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Tile Rendering (Reverted to base64Image) ---
+        // --- Tile Rendering (with Click Exclusion Fix) ---
         
         window.renderSingleTile = function(tileId, tileData) {
             const domId = `tile-${tileId}`;
@@ -713,6 +777,10 @@
                 tileElement.classList.add('draggable-tile'); 
                 canvasContainer.appendChild(tileElement);
             }
+            
+            // Remove old listeners to prevent double firing, especially important for the zoom logic
+            tileElement.onclick = null;
+            tileElement.ontouchend = null;
             
             const isMyTile = tileId === userId;
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
@@ -755,7 +823,7 @@
             
             // Updated innerHTML to include the pushpins
             tileElement.innerHTML = `
-                <!-- Pushpins for the four corners -->
+                <!-- Pushpins for the four corners. These elements are EXCLUDED from zoom. -->
                 <div class="pushpin top-left"></div>
                 <div class="pushpin top-right"></div>
                 <div class="pushpin bottom-left"></div>
@@ -766,16 +834,36 @@
                         ${isMyTile ? 'Your Tile' : `Shared by ${tileData.name}`}
                     </p>
                 </div>
-                <!-- Hidden Info Tag -->
+                <!-- Hidden Info Tag (EXCLUDED from zoom) -->
                 <div id="info-tag-${tileId}" class="info-tag">
                     ${infoTagContent}
                 </div>
-                <!-- Toggle Button -->
+                <!-- Toggle Button (EXCLUDED from zoom) -->
                 <button id="info-toggle-${tileId}" class="info-toggle-button">
                     +
                 </button>
             `;
             
+            // --- NEW: Zoom Exclusion Logic ---
+            const excludedSelectors = [
+                `#info-toggle-${tileId}`, // The '+' or 'x' button
+                `#info-tag-${tileId}`,    // The full info panel (if visible)
+                `.pushpin`                // Any of the pushpins
+            ];
+            
+            /**
+             * Checks if the event target is inside an element that should block the zoom.
+             * @param {Event} e 
+             * @returns {boolean} True if the click should be blocked.
+             */
+            const isExcluded = (e) => {
+                // If the click is on the tile element itself, and not a sub-element, it's valid for zoom
+                if (e.target === tileElement) return false;
+                
+                // Check if the target is inside any of the excluded elements
+                return e.target.closest(excludedSelectors.join(',')) !== null;
+            };
+
             // Attach toggle button listener
             const toggleButton = tileElement.querySelector(`#info-toggle-${tileId}`);
             const infoTag = tileElement.querySelector(`#info-tag-${tileId}`);
@@ -793,7 +881,10 @@
                 toggleButton.addEventListener('mousedown', stopPropagation);
                 toggleButton.addEventListener('touchstart', stopPropagation, { passive: false });
                 
-                toggleButton.addEventListener('click', toggleInfo);
+                toggleButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleInfo();
+                });
                 toggleButton.addEventListener('touchend', (e) => {
                     e.preventDefault(); 
                     e.stopPropagation(); 
@@ -801,24 +892,59 @@
                 });
             }
 
-            // Dragging logic
+            // Dragging and Click/Zoom logic
             if (isMyTile && !isRestricted && userId) {
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
                 tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
+                
+                // Add zoom listener: Check for exclusion before zooming on click
+                tileElement.onclick = (e) => {
+                    if (isExcluded(e)) return;
+                    e.stopPropagation();
+                    window.zoomTile(tileData);
+                };
+                
+                // Add zoom listener: Check for exclusion before zooming on touchend
+                tileElement.ontouchend = (e) => {
+                    if (isExcluded(e)) return;
+                    e.stopPropagation();
+                    // Delay check to ensure dragEnd has already run
+                    setTimeout(() => {
+                        // isDragging is set to false in handleDragEnd after a drag
+                        if (!isDragging) { 
+                            window.zoomTile(tileData);
+                        }
+                    }, 50); 
+                };
+
             } else {
+                // Not my tile, or restricted: only allow zoom (non-draggable state)
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
-                tileElement.style.cursor = 'default';
-                tileElement.classList.remove('active-drag-state'); 
+                
+                // Always allow zoom for non-owner/restricted tiles, but check for exclusion
+                tileElement.onclick = (e) => {
+                    if (isExcluded(e)) return;
+                    e.stopPropagation();
+                    window.zoomTile(tileData);
+                };
+                
+                tileElement.ontouchend = (e) => {
+                    if (isExcluded(e)) return;
+                    e.stopPropagation();
+                    window.zoomTile(tileData);
+                };
 
                 if (isMyTile && isRestricted) {
                     tileElement.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-inner');
+                    tileElement.style.cursor = 'default';
                 } else {
                     tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
                     tileElement.classList.add('opacity-90');
                 }
+                tileElement.style.cursor = 'zoom-in';
             }
             
             // Cooldown Interval Logic (only runs if userId is available)
