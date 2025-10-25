@@ -33,13 +33,12 @@
             cursor: grab;
             transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
-            /* --- IMAGE FIX: Changed 'cover' to 'contain' and added no-repeat --- */
             background-size: contain; 
             background-repeat: no-repeat;
-            /* --- END IMAGE FIX --- */
             background-position: center;
             background-color: #3b82f6; /* Fallback blue */
             border-radius: 0; 
+            will-change: transform;
         }
         /* Visual feedback for when the tile is actively being dragged */
         .draggable-tile:active, .draggable-tile.active-drag-state {
@@ -49,13 +48,15 @@
             transform: scale(1.01); /* Slight lift */
         }
         .prompt-modal-overlay {
-            position: absolute;
+            position: fixed; 
             inset: 0;
-            background-color: rgba(0, 0, 0, 0.5);
+            background-color: rgba(0, 0, 0, 0.6);
             display: flex;
             justify-content: center;
             align-items: center;
             z-index: 30;
+            overflow-y: auto; 
+            padding: 20px 0;
         }
         /* Custom class for image preview */
         .image-preview {
@@ -79,23 +80,24 @@
             bottom: 0;
             left: 0;
             right: 0;
-            background-color: rgba(0, 0, 0, 0.9); /* Darker for contrast */
+            background-color: rgba(0, 0, 0, 0.9); 
             color: white;
-            padding: 8px; /* py-2 */
-            font-size: 0.75rem; /* text-xs */
+            padding: 8px; 
+            font-size: 0.75rem; 
             line-height: 1rem;
             text-align: center;
             opacity: 0;
-            transform: translateY(100%); /* Start off-screen */
+            transform: translateY(100%); 
             transition: opacity 0.3s ease, transform 0.3s ease;
             z-index: 15; 
             border-bottom-left-radius: 0; 
             border-bottom-right-radius: 0; 
+            pointer-events: none; 
         }
         .info-tag.visible {
             opacity: 1;
-            transform: translateY(0); /* Slide into view */
-            pointer-events: auto; /* Enable interaction when visible */
+            transform: translateY(0); 
+            pointer-events: auto; 
         }
         .info-toggle-button {
             position: absolute;
@@ -145,14 +147,15 @@
                     maxlength="15"
                 >
                 
-                <!-- Image Upload Section -->
+                <!-- Image Upload Section (Restored) -->
                 <div class="flex flex-col space-y-2">
-                    <p class="text-sm font-medium text-gray-600">Upload Your Background Image (PNG/JPG)</p>
+                    <p class="text-sm font-medium text-gray-600">Upload and Compress Image (PNG/JPG)</p>
                     <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
                     
                     <div id="image-preview" class="w-16 h-20 border-2 border-dashed border-gray-300 rounded-lg mx-auto image-preview mt-2 bg-gray-100 flex items-center justify-center text-xs text-gray-500">
                         Preview
                     </div>
+                    <p id="compression-status" class="text-[10px] text-center text-red-500 hidden">Compressing...</p>
                 </div>
 
                 <button
@@ -173,7 +176,7 @@
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // =========================================================================================================
-        // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK (Fixed with user's Project ID and API Key) 🚀
+        // 🚀 MANUAL FIREBASE CONFIGURATION FALLBACK 🚀
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         let firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
@@ -188,7 +191,7 @@
         let db = null;
         let auth = null;
         let userId = null; 
-        let authReady = false; // Flag to indicate if we have finished the auth check (success or fail)
+        let authReady = false; 
         
         // --- Global App State & DOM Elements ---
         const canvasContainer = document.getElementById('canvas-container');
@@ -196,7 +199,7 @@
         const userStatusText = document.getElementById('user-status-text');
         
         let allTiles = new Map(); 
-        let uploadedBase64Image = null; // Stores the image data for the new tile
+        let uploadedBase64Image = null; // Stores the *compressed* image data for the new tile
         
         // Drag limit constants
         const MAX_DRAG_SESSIONS = 6;
@@ -219,6 +222,61 @@
         const TILE_SIZE_CLASSES = "size-rect-sm sm:size-rect-lg"; 
 
         // --- Utility Functions ---
+        
+        /**
+         * Resizes and compresses an image file using canvas to ensure it stays
+         * well under the 1MB Firestore document limit.
+         * @param {File} file The image file uploaded by the user.
+         * @returns {Promise<string>} Compressed Base64 string of the image.
+         */
+        function resizeAndCompressImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+
+                reader.onload = (readerEvent) => {
+                    const img = new Image();
+                    img.src = readerEvent.target.result;
+                    
+                    img.onload = () => {
+                        const MAX_WIDTH = 800; // Max width/height dimension in pixels
+                        const MAX_HEIGHT = 800;
+                        const MIME_TYPE = 'image/jpeg';
+                        const QUALITY = 0.7; // 70% compression quality
+
+                        let width = img.width;
+                        let height = img.height;
+
+                        // Calculate new dimensions while maintaining aspect ratio
+                        if (width > height) {
+                            if (width > MAX_WIDTH) {
+                                height = Math.round(height * (MAX_WIDTH / width));
+                                width = MAX_WIDTH;
+                            }
+                        } else {
+                            if (height > MAX_HEIGHT) {
+                                width = Math.round(width * (MAX_HEIGHT / height));
+                                height = MAX_HEIGHT;
+                            }
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // Convert canvas content to compressed Base64
+                        const dataUrl = canvas.toDataURL(MIME_TYPE, QUALITY);
+                        resolve(dataUrl);
+                    };
+
+                    img.onerror = (e) => reject("Image loading error.");
+                };
+                reader.onerror = (e) => reject("File reading error.");
+            });
+        }
 
         /**
          * Returns the current tile dimensions based on viewport size.
@@ -240,7 +298,6 @@
             const tileId = data.creatorId || userId;
             if (!tileId) return console.error("Cannot save tile: missing ID.");
 
-            // CRITICAL CHECK: Block save if DB/User is not ready
             if (!userId || !db) {
                  console.error("Save blocked: Firebase services are not ready or user is unauthorized.");
                  return; 
@@ -248,29 +305,19 @@
 
             const tileRef = getTileDocRef(tileId);
             try {
+                // Ensure data is still small enough, though compression should have handled this
+                const size = JSON.stringify(data.base64Image || '').length;
+                if (size > 1024 * 700) { // 700KB safety limit
+                     console.error("Compressed image is still too large! Size:", size, "bytes");
+                     // This should not happen with the current compression settings but serves as a final safeguard.
+                     return;
+                }
                 await setDoc(tileRef, data, { merge: true });
             } catch (error) {
                 console.error("Error saving tile data to Firestore:", error);
             }
         }
         
-        /**
-         * Converts a File object to a Base64 string using FileReader.
-         */
-        function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = () => {
-                    resolve(reader.result);
-                }
-                reader.onerror = error => {
-                    console.error("FileReader Error:", error);
-                    reject(error);
-                };
-            });
-        }
-
         /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
          */
@@ -289,7 +336,6 @@
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
-                // Use current live dimensions for the "other" tile
                 const otherW = otherElement.offsetWidth;
                 const otherH = otherElement.offsetHeight;
                 
@@ -297,15 +343,14 @@
                 const otherLeft = otherRect.left;
                 const otherTop = otherRect.top;
 
-                // Collision logic: A and B overlap if they don't separate on any axis
                 const overlapsX = newLeft < (otherLeft + otherW) && targetRight > otherLeft;
                 const overlapsY = newTop < (otherTop + otherH) && targetBottom > otherTop;
 
                 if (overlapsX && overlapsY) {
-                    return true; // Collision detected
+                    return true; 
                 }
             }
-            return false; // No collision
+            return false; 
         }
         
         // --- UI Control ---
@@ -336,7 +381,6 @@
                 allTiles = currentTiles;
                 window.renderAllTiles();
                 
-                // Show prompt if the user is authenticated but hasn't created a tile yet.
                 if (authReady && userId && !allTiles.has(userId)) {
                     createPromptModal.classList.remove('hidden');
                 } else {
@@ -357,13 +401,11 @@
             try {
                 // 1. CRITICAL CONFIGURATION CHECK & FALLBACK LOGIC
                 if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                    // Build a complete fallback configuration
                     firebaseConfig = {
                         apiKey: manualApiKeyFallback,
                         authDomain: `${manualProjectIdFallback}.firebaseapp.com`,
                         projectId: manualProjectIdFallback,
                         storageBucket: `${manualProjectIdFallback}.appspot.com`,
-                        // These are dummy values but required for structure
                         messagingSenderId: "1234567890", 
                         appId: "1:1234567890:web:1234567890abcdef",
                     };
@@ -372,7 +414,6 @@
                     
                     if (userStatusText) userStatusText.innerHTML = statusHtml;
 
-                    // If we don't even have a project ID, bail out
                     if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
                         console.error("Firebase config is completely missing even with fallbacks. Cannot proceed.");
                         authReady = true; 
@@ -382,7 +423,6 @@
                         return;
                     }
                 }
-
 
                 // 2. Initialize services
                 app = initializeApp(firebaseConfig);
@@ -416,7 +456,6 @@
                 }
 
             } catch (error) {
-                // Catches synchronous errors during initialization (e.g., Firebase internal error)
                 userId = null;
                 authReady = true;
                 console.error("FATAL: Error during Firebase initialization:", error);
@@ -424,10 +463,9 @@
             }
         }
         
-        // --- Drag Handlers ---
+        // --- Drag Handlers (No change in logic) ---
         
         function handleDragStart(e) {
-            // DRAG CHECK: Block drag if user is not the owner, is on cooldown, or cannot save state.
             if (!userId) {
                  console.warn("Drag blocked: Cannot save state without active user ID.");
                  return;
@@ -437,12 +475,10 @@
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
-            // Client-side check for ownership and cooldown
             if (tileData.creatorId !== userId || (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now())) {
                 return;
             }
             
-            // CRITICAL MOBILE FIX: Prevent dragging on multi-touch gestures (like zooming on mobile)
             if (e.touches && e.touches.length > 1) {
                 return;
             }
@@ -481,9 +517,9 @@
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
             
-            // Collision check before applying style
+            // Collision check
             if (checkCollision(activeTileId, newLeft, newTop)) {
-                return; // Prevent the move if collision occurs
+                return; 
             }
 
             activeTileElement.style.left = `${newLeft}px`;
@@ -495,10 +531,8 @@
             
             const tileData = allTiles.get(activeTileId);
             
-            // Remove active state class
             if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
             
-            // Only save if move is authorized and userId is known
             if (userId) {
                 if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
                     
@@ -534,7 +568,7 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Tile Rendering ---
+        // --- Tile Rendering (Reverted to base64Image) ---
         
         window.renderSingleTile = function(tileId, tileData) {
             const domId = `tile-${tileId}`;
@@ -553,7 +587,6 @@
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
-            // Auto-reset moves if cooldown expired AND we have a live DB connection
             if (isCooldownExpired && isMyTile && userId) {
                 saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
                 movesLeft = MAX_DRAG_SESSIONS;
@@ -561,28 +594,21 @@
             
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
-            // Use centralized class constants for size
             tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
 
-            // Set background image style
+            // --- USE COMPRESSED BASE64 IMAGE ---
             if (tileData.base64Image) {
-                // ADDED LOG: This will confirm if the large Base64 string is still present at render time.
-                console.log(`Rendering tile ${tileId}. Image data size: ${tileData.base64Image.length} characters.`);
-                
                 tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
-                
-                // FIX: Use a visible background color if the image fails to load (instead of transparent)
-                // This prevents the "transparent rectangle" issue by ensuring the tile is visible even if the image URL fails.
-                tileElement.style.backgroundColor = '#d1d5db'; // bg-gray-300
+                // Keep the gray fallback for stable visibility if image fails (but shouldn't now)
+                tileElement.style.backgroundColor = '#d1d5db'; 
             } else {
-                console.warn(`Rendering tile ${tileId}. Missing base64Image data.`);
+                console.warn(`Rendering tile ${tileId}. Missing or undefined base64Image data.`);
                 tileElement.style.backgroundImage = 'none';
                 tileElement.style.backgroundColor = '#4B5563'; 
             }
 
             const textColor = 'text-white'; 
             
-            // --- UPDATED: Moves display for the Info Tag ---
             let movesDisplayText = '';
             if (isMyTile) {
                  movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft}/${MAX_DRAG_SESSIONS}`;
@@ -590,7 +616,6 @@
                  movesDisplayText = 'Shared Piece (Move limit does not apply to you)';
             }
             
-            // NEW: Info tag content now includes Name and Moves
             const infoTagContent = `
                 <p class="font-bold mb-1 truncate text-lg">Name: ${tileData.name}</p>
                 <p class="mb-1">Owner: ${isMyTile ? 'You' : tileData.name}</p>
@@ -598,7 +623,6 @@
                 <p class="text-[8px] opacity-70 break-all mt-1">ID: ${tileId}</p>
             `;
             
-            // --- Main tile content (Simplified) ---
             tileElement.innerHTML = `
                 <div class="h-full w-full flex flex-col justify-end items-end p-2 select-none pointer-events-none">
                     <p class="text-xs italic font-normal ${textColor} opacity-80 select-none bg-black bg-opacity-40 px-2 py-1">
@@ -625,43 +649,36 @@
                     toggleButton.textContent = infoTag.classList.contains('visible') ? 'x' : '+';
                 };
                 
-                // Stop Propagation to prevent drag from starting and counting as a move
                 const stopPropagation = (e) => {
                     e.stopPropagation();
                 }
 
-                // Block drag initiation on mousedown/touchstart
                 toggleButton.addEventListener('mousedown', stopPropagation);
                 toggleButton.addEventListener('touchstart', stopPropagation, { passive: false });
                 
-                // Attach actual toggle functionality to the click/touchend events
                 toggleButton.addEventListener('click', toggleInfo);
                 toggleButton.addEventListener('touchend', (e) => {
-                    e.preventDefault(); // Prevent ghost click and scrolling
-                    e.stopPropagation(); // Safe guard
+                    e.preventDefault(); 
+                    e.stopPropagation(); 
                     toggleInfo();
                 });
             }
 
             // Dragging logic
             if (isMyTile && !isRestricted && userId) {
-                // Attach event listeners for drag/touch start
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
                 tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
             } else {
-                // Disable dragging for restricted or foreign tiles
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
                 tileElement.classList.remove('active-drag-state'); 
 
                 if (isMyTile && isRestricted) {
-                    // Visual state for cooldown
                     tileElement.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-inner');
                 } else {
-                    // Visual state for other user's tiles
                     tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
                     tileElement.classList.add('opacity-90');
                 }
@@ -674,7 +691,7 @@
                 const updateRestrictionDisplay = () => {
                     const now = Date.now();
                     const timeRemaining = tileData.moveRestrictionEndTime - now;
-                    const movesDisplayElement = tileElement.querySelector('.info-tag p:nth-child(3)'); // Target the move status in the info tag
+                    const movesDisplayElement = tileElement.querySelector('.info-tag p:nth-child(3)'); 
 
                     if (timeRemaining <= 0) {
                         clearInterval(parseInt(tileElement.dataset.cooldownInterval));
@@ -698,7 +715,7 @@
                  tileElement.dataset.cooldownInterval = '0';
             }
             
-            // Set position - CRITICAL FIX: Skip setting position if the tile is actively being dragged
+            // Set position 
             const isCurrentlyDragged = activeTileId === tileId && isDragging;
             
             if(!isCurrentlyDragged && tileData.left && tileData.top) {
@@ -733,23 +750,22 @@
         
         function setupPromptHandlers() {
             const createNameInput = document.getElementById('name-input');
-            const imageUploadInput = document.getElementById('image-upload');
+            const imageUploadInput = document.getElementById('image-upload'); // RESTORED
             const imagePreviewElement = document.getElementById('image-preview');
             const createButton = document.getElementById('submit-button');
+            const compressionStatus = document.getElementById('compression-status');
             
             // Function to check local inputs only.
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; 
                 
-                // Button is enabled based on local inputs ONLY, AND if Firebase is ready.
                 createButton.disabled = !(nameValid && imageValid && authReady && userId);
             };
 
-            // Expose the check function on the button
             createButton.checkInputStatus = checkCreateInput;
 
-            // Image file reader for preview and storage
+            // Image file reader with compression
             imageUploadInput.addEventListener('change', async (e) => {
                 const file = e.target.files[0];
                 
@@ -757,40 +773,53 @@
                     uploadedBase64Image = null;
                     imagePreviewElement.style.backgroundImage = 'none';
                     imagePreviewElement.textContent = 'Preview';
+                    compressionStatus.classList.add('hidden');
                     checkCreateInput();
                     return;
                 }
                 
-                imagePreviewElement.textContent = 'Loading...';
-                imagePreviewElement.style.backgroundImage = 'none';
-
+                // --- Start Compression/Loading Feedback ---
+                uploadedBase64Image = null; // Disable button while processing
+                checkCreateInput();
+                
+                imagePreviewElement.textContent = 'Compressing...';
+                imagePreviewElement.classList.remove('bg-gray-100');
+                imagePreviewElement.classList.add('bg-yellow-100');
+                compressionStatus.classList.remove('hidden');
+                
                 try {
-                    uploadedBase64Image = await fileToBase64(file);
-                    imagePreviewElement.style.backgroundImage = `url('${uploadedBase64Image}')`;
+                    const compressedDataUrl = await resizeAndCompressImage(file);
+                    uploadedBase64Image = compressedDataUrl;
+                    
+                    // Show final compressed data size for debugging/confirmation
+                    const sizeKB = Math.round(compressedDataUrl.length / 1024);
+                    compressionStatus.textContent = `Compressed: ${sizeKB} KB (Safe for Firestore)`;
+                    
+                    imagePreviewElement.style.backgroundImage = `url('${compressedDataUrl}')`;
                     imagePreviewElement.textContent = '';
                     
                 } catch (error) {
-                    console.error("Error converting file to base64:", error);
+                    console.error("Error processing image:", error);
                     uploadedBase64Image = null;
                     imagePreviewElement.style.backgroundImage = 'none';
                     imagePreviewElement.textContent = 'Error';
+                    compressionStatus.textContent = 'Error compressing image!';
                 }
                 
+                imagePreviewElement.classList.add('bg-gray-100');
+                imagePreviewElement.classList.remove('bg-yellow-100');
                 checkCreateInput(); 
             });
 
-            // Ensure checkCreateInput is called on every input event for name
             createNameInput.addEventListener('keyup', checkCreateInput); 
             createNameInput.addEventListener('input', checkCreateInput); 
             
-            // Initial check when component loads
             checkCreateInput(); 
 
 
             const createNewTile = async () => {
                 const name = createNameInput.value.trim();
                 
-                // Final, strict check: if the user clicked the button, we must have a userId to save.
                 if (!name || !uploadedBase64Image || !userId) {
                     console.error("Cannot create tile: Critical data missing (User ID, Name, or Image).");
                     checkCreateInput();
@@ -799,7 +828,6 @@
 
                 console.log(`Attempting to create and save tile for user: ${userId}`);
 
-                // Proceed with creation
                 hideModal(createPromptModal);
                 
                 const creationDate = new Date().toLocaleDateString('en-US', { 
@@ -815,7 +843,7 @@
                 const newTileData = {
                     creatorId: userId, 
                     name: name,
-                    base64Image: uploadedBase64Image, 
+                    base64Image: uploadedBase64Image, // NOW SAVING THE COMPRESSED, STABLE DATA
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
@@ -837,10 +865,7 @@
 
         // --- Core Execution Flow ---
         
-        // 1. Setup prompt handlers immediately for responsiveness
         setupPromptHandlers();
-
-        // 2. Start Firebase initialization immediately 
         setupAuthAndData();
         
     </script>
