@@ -309,6 +309,15 @@
         const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
         const TILE_SIZE_CLASSES = "size-rect-sm"; 
 
+        /**
+         * Unified function to extract client coordinates from mouse or touch event.
+         */
+        function getClientCoords(e) {
+            if (e.touches && e.touches.length > 0) {
+                return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+            }
+            return { clientX: e.clientX, clientY: e.clientY };
+        }
         
         function resizeAndCompressImage(file) {
             return new Promise((resolve, reject) => {
@@ -597,9 +606,10 @@
             allTiles.forEach((data) => createTileElement(data));
         }
 
-        // --- DRAG LOGIC REFACTORED USING EVENT DELEGATION ---
+        // --- DRAG LOGIC REFACTORED USING EVENT DELEGATION AND UNIFIED COORDINATES ---
 
         function setupDragEvents() {
+            // Delegated start events on the container
             canvasContainer.addEventListener('mousedown', delegatedStartDrag);
             canvasContainer.addEventListener('touchstart', delegatedStartDrag, { passive: false });
         }
@@ -645,14 +655,14 @@
             
             activeTileElement.classList.add('active-drag-state');
             
-            const clientX = e.clientX || e.touches[0].clientX;
-            const clientY = e.clientY || e.touches[0].clientY;
+            // Use the unified coordinate function
+            const { clientX, clientY } = getClientCoords(e);
 
             const rect = activeTileElement.getBoundingClientRect();
             offsetX = clientX - rect.left;
             offsetY = clientY - rect.top;
 
-            // Attach global move/end listeners
+            // Attach global move/end listeners to the document
             document.addEventListener('mousemove', drag);
             document.addEventListener('mouseup', endDrag);
             document.addEventListener('touchmove', drag, { passive: false });
@@ -661,14 +671,14 @@
 
 
         function drag(e) {
-            if (!isDragging) return;
+            if (!isDragging || !activeTileElement) return;
 
             if (e.type === 'touchmove') {
                 e.preventDefault(); 
             }
             
-            const clientX = e.clientX || e.touches[0].clientX;
-            const clientY = e.clientY || e.touches[0].clientY;
+            // Use the unified coordinate function
+            const { clientX, clientY } = getClientCoords(e);
             
             const containerRect = canvasContainer.getBoundingClientRect();
 
