@@ -56,6 +56,27 @@
             z-index: 20; 
             transform: scale(1.01); 
         }
+        
+        /* --- NEW PUSHPIN STYLING --- */
+        .pushpin {
+            position: absolute;
+            width: 24px; 
+            height: 24px;
+            /* Raw URL for the pushpin image */
+            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/pushpin%20png.png');
+            background-size: cover;
+            background-repeat: no-repeat;
+            z-index: 21; /* Ensure pins are above the tile */
+            pointer-events: none; /* Pins should not interfere with dragging the tile */
+        }
+        /* Offset by half the width/height to center the pin on the corner */
+        .pushpin.top-left { top: -12px; left: -12px; }
+        .pushpin.top-right { top: -12px; right: -12px; }
+        .pushpin.bottom-left { bottom: -12px; left: -12px; }
+        .pushpin.bottom-right { bottom: -12px; right: -12px; }
+        /* --- END PUSHPIN STYLING --- */
+
+
         .prompt-modal-overlay {
             position: fixed; 
             inset: 0;
@@ -373,7 +394,6 @@
 
             // Spiral search pattern: 1R, 1U, 2L, 2D, 3R, 3U, 4L, 4D...
             while (offset <= maxOffset) {
-                // R, U, L, D movements for the current offset square
                 
                 // 1. Right side check (x=offset, y runs -offset to offset)
                 for (let y = -offset; y <= offset; y += step) {
@@ -710,7 +730,14 @@
                 <p class="text-[8px] opacity-70 break-all mt-1">ID: ${tileId}</p>
             `;
             
+            // Updated innerHTML to include the pushpins
             tileElement.innerHTML = `
+                <!-- Pushpins for the four corners -->
+                <div class="pushpin top-left"></div>
+                <div class="pushpin top-right"></div>
+                <div class="pushpin bottom-left"></div>
+                <div class="pushpin bottom-right"></div>
+            
                 <div class="h-full w-full flex flex-col justify-end items-end p-2 select-none pointer-events-none">
                     <p class="text-xs italic font-normal ${textColor} opacity-80 select-none bg-black bg-opacity-40 px-2 py-1">
                         ${isMyTile ? 'Your Tile' : `Shared by ${tileData.name}`}
