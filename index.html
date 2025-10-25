@@ -89,10 +89,12 @@
     </div>
 
     <script type="module">
-        // --- Firebase Imports (Deferred in the module script) ---
+        // The setLogLevel function has moved to the 'firebase/app' module in recent SDK versions.
+        // It's removed from the import list to fix the SyntaxError.
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // If you need logging, you would import it separately: import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 
         // =========================================================================================================
         // ⭐ IMPORTANT: CONFIGURATION REQUIRED FOR SHARED FUNCTIONALITY ⭐
@@ -246,7 +248,7 @@
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    // setLogLevel('Debug'); // Uncomment for debugging
+                    // setLogLevel('Debug'); // Must be imported from 'firebase/app' if needed.
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
