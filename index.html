@@ -18,9 +18,11 @@
         body {
             font-family: 'Inter', sans-serif;
             
-            /* Body now uses a solid dark color to contrast the tiled viewport on desktop */
-            background-color: #333; 
-            background-image: none; 
+            /* Tiling Background Texture on the outer body (applies to whole screen) */
+            background-color: #f0f3f6; 
+            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
+            background-repeat: repeat;
+            background-size: 200px 200px; 
             
             height: 100vh;
             overflow: hidden; 
@@ -38,11 +40,9 @@
             max-width: 420px;
             height: 100vh;
             
-            /* Tiling Background Texture moved here to be visible on both desktop (centered) and mobile (fullscreen) */
-            background-color: #f0f3f6; 
-            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
-            background-repeat: repeat;
-            background-size: 200px 200px;
+            /* Background set to transparent to show the tiling pattern from the body underneath */
+            background-color: transparent; 
+            background-image: none; 
             
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
             overflow: hidden;
@@ -269,6 +269,7 @@
         let auth = null;
         let userId = null; 
         let authReady = false; 
+        let isSaving = false; // Flag to prevent onSnapshot race condition
         
         const canvasContainer = document.getElementById('canvas-container');
         const createPromptModal = document.getElementById('input-prompt-modal');
@@ -359,6 +360,7 @@
             }
 
             const tileRef = getTileDocRef(tileId);
+            isSaving = true; // Set flag before save starts
             try {
                 const size = JSON.stringify(data.base64Image || '').length;
                 if (size > 1024 * 700) { 
@@ -366,6 +368,8 @@
                 }
                 await setDoc(tileRef, data, { merge: true });
             } catch (error) {
+            } finally {
+                isSaving = false; // Clear flag after save attempts
             }
         }
         
@@ -738,6 +742,12 @@
             const tilesQuery = query(tilesCollectionRef);
 
             onSnapshot(tilesQuery, (snapshot) => {
+                
+                // IMPORTANT: Ignore incoming data while a tile move is being saved
+                if (isSaving) {
+                    return;
+                }
+                
                 snapshot.docChanges().forEach((change) => {
                     const tileData = change.doc.data();
                     const creatorId = tileData.creatorId;
