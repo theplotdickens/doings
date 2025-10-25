@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shared Draggable Tile Playground</title>
-    <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
@@ -25,10 +24,11 @@
             position: absolute;
             user-select: none;
             cursor: grab;
-            transition: box-shadow 0.3s ease;
+            transition: box-shadow 0.3s ease, opacity 0.3s ease;
             z-index: 10; 
         }
-        .draggable-tile:active {
+        /* Visual feedback for when the tile is actively being dragged */
+        .draggable-tile:active, .draggable-tile.active-drag-state {
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
             z-index: 20; 
@@ -44,8 +44,7 @@
         }
         /* Custom class for selected color, using a highly visible ring */
         .color-selected {
-            /* Ring is blue to contrast with swatches, and thicker */
-            outline: 3px solid #3b82f6; 
+            outline: 3px solid #3b82f6; /* Blue ring */
             outline-offset: 3px; 
             box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
         }
@@ -53,15 +52,12 @@
 </head>
 <body>
     
-    <!-- Main container for all draggable tiles -->
     <section id="canvas-container"></section>
 
-    <!-- INPUT PROMPT MODAL: Made visible by default to ensure it loads instantly. -->
     <div id="input-prompt-modal" class="prompt-modal-overlay">
         <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
-                <!-- Status text for Firebase initialization -->
                 <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
                     Status: UI loaded. Initializing services...
                 </p>
@@ -78,8 +74,7 @@
                 <div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600 text-center">Choose a Color</p>
                     <div id="color-picker" class="flex justify-between items-center px-2">
-                        <!-- Swatches rendered here by JS -->
-                    </div>
+                        </div>
                 </div>
 
                 <button
@@ -137,8 +132,11 @@
         let offsetX = 0;
         let offsetY = 0;
         
-        const TILE_SIZE_SM = 192; 
-        const TILE_SIZE_LG = 224; 
+        // Centralized Tailwind classes for easier maintenance
+        const TILE_SIZE_SM = 192; // corresponds to w-48 h-48
+        const TILE_SIZE_LG = 224; // corresponds to sm:w-56 sm:h-56
+        const TILE_BASE_CLASSES = "shadow-xl rounded-lg draggable-tile"; 
+        const TILE_SIZE_CLASSES = "w-48 h-48 sm:w-56 sm:h-56";
 
         // --- Utility Functions ---
 
@@ -263,7 +261,7 @@
             }
         }
         
-        // --- Drag Handlers (omitted for brevity, unchanged from working version) ---
+        // --- Drag Handlers ---
         
         function handleDragStart(e) {
             const tileElement = e.currentTarget;
@@ -279,6 +277,9 @@
             activeTileElement = tileElement; 
             activeTileId = tileId;
             
+            // Apply active state class for consistent visuals
+            activeTileElement.classList.add('active-drag-state');
+
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
@@ -312,7 +313,10 @@
             if (!isDragging || !activeTileId) return;
             
             const tileData = allTiles.get(activeTileId);
-
+            
+            // Remove active state class
+            if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
+            
             if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
                 
                 const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
@@ -344,7 +348,7 @@
         document.addEventListener('touchcancel', handleDragEnd);
 
 
-        // --- Tile Rendering (omitted for brevity, unchanged from working version) ---
+        // --- Tile Rendering ---
         
         function renderSingleTile(tileId, tileData) {
             const domId = `tile-${tileId}`;
@@ -371,8 +375,8 @@
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
             const colorClass = tileData.color;
-            tileElement.className = `w-48 h-48 sm:w-56 sm:h-56 shadow-xl rounded-lg ${colorClass}`;
-            tileElement.classList.add('draggable-tile');
+            // Use centralized class constants and merge.
+            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} ${colorClass}`;
 
             const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
             const textColor = isLightColor ? 'text-gray-800' : 'text-white';
@@ -404,13 +408,24 @@
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
-                tileElement.classList.remove('opacity-75', 'cursor-not-allowed');
+                // Remove cooldown specific classes if tile is ready to move
+                tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
             } else {
-                 tileElement.onmousedown = null;
-                 tileElement.ontouchstart = null;
-                 tileElement.style.cursor = 'default';
-                 if (isMyTile && isRestricted) tileElement.classList.add('opacity-75', 'cursor-not-allowed');
-                 else tileElement.classList.add('opacity-90');
+                tileElement.onmousedown = null;
+                tileElement.ontouchstart = null;
+                tileElement.style.cursor = 'default';
+                
+                // Clear active drag state if it somehow lingered
+                tileElement.classList.remove('active-drag-state'); 
+
+                if (isMyTile && isRestricted) {
+                    // Clearer visual for cooldown
+                    tileElement.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-inner');
+                } else {
+                    // Neutral, non-draggable shared tile
+                    tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
+                    tileElement.classList.add('opacity-90');
+                }
             }
             
             if (isMyTile && isRestricted) {
@@ -424,6 +439,8 @@
 
                     if (timeRemaining <= 0) {
                         clearInterval(parseInt(tileElement.dataset.cooldownInterval));
+                        // Trigger a re-render/re-evaluation
+                        saveTile({ movesMade: 0, moveRestrictionEndTime: 0 }); 
                         return; 
                     }
 
@@ -492,10 +509,9 @@
                 swatch.type = 'button';
                 swatch.dataset.color = colorClass;
                 swatch.title = name;
-                // Increased size (w-8 h-8) for easier tapping
                 swatch.className = `color-swatch w-8 h-8 rounded-full shadow-md hover:ring-2 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
                 
-                // CRITICAL FIX: Use mousedown/touchstart for reliability
+                // Use mousedown/touchstart for reliability
                 const selectColorHandler = (e) => {
                     // Prevent default action (like scrolling on touch)
                     e.preventDefault(); 
