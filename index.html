@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shared Draggable Tile Playground</title>
+    <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
@@ -50,14 +51,17 @@
         }
     </style>
 </head>
-<body>
+<body onresize="renderAllTiles()">
     
+    <!-- Main container for all draggable tiles -->
     <section id="canvas-container"></section>
 
+    <!-- INPUT PROMPT MODAL: Visible until the user creates a tile -->
     <div id="input-prompt-modal" class="prompt-modal-overlay">
         <div class="w-full max-w-xs mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Shared Tile</p>
+                <!-- Status text for Firebase initialization -->
                 <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
                     Status: UI loaded. Initializing services...
                 </p>
@@ -74,7 +78,8 @@
                 <div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600 text-center">Choose a Color</p>
                     <div id="color-picker" class="flex justify-between items-center px-2">
-                        </div>
+                        <!-- Swatches rendered here by JS -->
+                    </div>
                 </div>
 
                 <button
@@ -87,11 +92,548 @@
             </div>
         </div>
     </div>
+    
+    <!-- Removed Edit Tile Modal HTML -->
+
 
     <script type="module">
-        // --- Firebase Imports (Deferred in the module script) ---
+        // --- Firebase Imports ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ---
+        // =========================================================================================================
+        // ⭐ FIREBASE CONFIGURATION INJECTED ⭐
+        // =========================================================================================================
+        const FIREBASE_CONFIG_OBJECT = {
+            apiKey: "AIzaSyBm425N7LfOy5M2bwCEA_x76qDj-W5O1WM",
+            authDomain: "doings-7717f.firebaseapp.com",
+            projectId: "doings-7717f",
+            storageBucket: "doings-7717f.firebasestorage.app",
+            messagingSenderId: "566659301557",
+            appId: "1:566659301557:web:b0ff5e651eac824b1bbefc",
+            measurementId: "G-YXYE1G6R27"
+        };
+        const FIREBASE_APP_ID = FIREBASE_CONFIG_OBJECT.projectId;
+        // =========================================================================================================
+
+        
+        // --- Global Firebase State Variables ---
+        const appId = FIREBASE_APP_ID;
+        const firebaseConfig = FIREBASE_CONFIG_OBJECT; 
+
+        let app = null;
+        let db = null;
+        let auth = null;
+        let userId = null; 
+        
+        // --- Global App State & DOM Elements ---
+        const canvasContainer = document.getElementById('canvas-container');
+        const createPromptModal = document.getElementById('input-prompt-modal');
+        const userStatusText = document.getElementById('user-status-text');
+        
+        let allTiles = new Map(); 
+        
+        // Drag limit constants
+        const MAX_DRAG_SESSIONS = 6;
+        const COOLDOWN_DURATION_MS = 60000;
+        
+        const COLORS = {
+            'Red': 'bg-red-500',
+            'Orange': 'bg-orange-500',
+            'Yellow': 'bg-yellow-400',
+            'Green': 'bg-green-500',
+            'Blue': 'bg-blue-600',
+            'Indigo': 'bg-indigo-600',
+            'Violet': 'bg-purple-600',
+            'Black': 'bg-black'
+        };
+        let selectedColor = COLORS['Red']; // Default color for creation
+        
+        // Drag State Variables
+        let isDragging = false;
+        let activeTileElement = null;
+        let activeTileId = null;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        // Centralized Tailwind classes for easier maintenance
+        const TILE_SIZE_SM = 192; // corresponds to w-48 h-48
+        const TILE_SIZE_LG = 224; // corresponds to sm:w-56 sm:h-56
+        const TILE_BASE_CLASSES = "shadow-xl rounded-lg draggable-tile"; 
+        const TILE_SIZE_CLASSES = "w-48 h-48 sm:w-56 sm:h-56";
+
+        // --- Utility Functions ---
+
+        window.getCurrentTileSize = function() {
+            return window.innerWidth >= 640 ? TILE_SIZE_LG : TILE_SIZE_SM;
+        }
+        
+        function getTileDocRef(tileId) {
+            if (!db) return null;
+            // Document path: /artifacts/{appId}/public/data/shared_tiles/{tileId}
+            return doc(db, 'artifacts', appId, 'public', 'data', 'shared_tiles', tileId); 
+        }
+
+        async function saveTile(data) {
+            const tileId = data.creatorId || userId;
+            if (!tileId) return console.error("Cannot save tile: missing ID.");
+
+            const tileRef = getTileDocRef(tileId);
+            if (tileRef) {
+                try {
+                    await setDoc(tileRef, data, { merge: true });
+                } catch (error) {
+                    console.error("Error saving tile data:", error);
+                }
+            } else {
+                 console.warn("Save requested, but no valid db connection.");
+            }
+        }
+        
+        // --- UI Control ---
+        
+        function hideModal(modal) {
+            modal.classList.add('hidden');
+        }
+        
+        function showModal(modal) {
+             modal.classList.remove('hidden');
+        }
+
+        // --- Data Listener and Auth Setup ---
+
+        function startDataListener() {
+            if (!db) return;
+            
+            const sharedTilesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'shared_tiles');
+            
+            // Set up real-time listener for the entire collection
+            onSnapshot(query(sharedTilesColRef), (querySnapshot) => {
+                let currentTiles = new Map();
+                
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    currentTiles.set(doc.id, data);
+                });
+                
+                allTiles = currentTiles;
+                window.renderAllTiles();
+                
+                // Show prompt if the user is authenticated but hasn't created a tile yet.
+                if (userId && !allTiles.has(userId)) {
+                    showModal(createPromptModal);
+                } else {
+                    hideModal(createPromptModal);
+                }
+                
+            }, (error) => {
+                console.error("Error listening to shared tiles:", error);
+                if (userId && allTiles.has(userId)) {
+                     hideModal(createPromptModal);
+                } else {
+                    showModal(createPromptModal);
+                }
+            });
+        }
+        
+        /**
+         * Initializes Firebase and starts Auth immediately on load.
+         */
+        function setupAuthAndData() {
+            
+            if (Object.keys(firebaseConfig).length > 0) {
+                try {
+                    // Initialize Firebase services immediately
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+                    
+                    if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
+
+                    // Set up the Auth State listener first
+                    onAuthStateChanged(auth, (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            startDataListener(); // Start listening for public tiles
+                            
+                            // RESTORED: Show the user ID in the status text
+                            if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold">${userId}</span>`;
+                            
+                        } else {
+                            userId = null; 
+                            console.warn("User signed out or auth failed.");
+                            if (userStatusText) userStatusText.textContent = "Status: Sign-in failed. Please refresh.";
+                            showModal(createPromptModal);
+                        }
+                    });
+                    
+                    // Attempt anonymous sign-in
+                    signInAnonymously(auth)
+                        .catch(error => console.error("Anonymous Sign-in Failed:", error));
+
+
+                } catch (error) {
+                    console.error("FATAL: Error during Firebase initialization:", error);
+                    if (userStatusText) userStatusText.textContent = "Status: FATAL ERROR - Check console and configuration.";
+                    showModal(createPromptModal);
+                }
+            }
+        }
+        
+        // --- Drag Handlers ---
+        
+        function handleDragStart(e) {
+            const tileElement = e.currentTarget;
+            const tileId = tileElement.dataset.tileId;
+            const tileData = allTiles.get(tileId);
+
+            // Client-side check: ensure the tile belongs to the user AND is not restricted
+            if (tileData.creatorId !== userId || (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now())) {
+                return;
+            }
+            
+            e.preventDefault(); 
+            isDragging = true;
+            activeTileElement = tileElement; 
+            activeTileId = tileId;
+            
+            // Apply active state class for consistent visuals
+            activeTileElement.classList.add('active-drag-state');
+
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            const rect = activeTileElement.getBoundingClientRect();
+            offsetX = clientX - rect.left;
+            offsetY = clientY - rect.top;
+        }
+
+        function handleDragMove(e) {
+            if (!isDragging || !activeTileElement) return;
+            e.preventDefault();
+
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            let newLeft = clientX - offsetX;
+            let newTop = clientY - offsetY;
+
+            const viewportW = window.innerWidth;
+            const viewportH = window.innerHeight;
+            const elementW = activeTileElement.offsetWidth;
+            const elementH = activeTileElement.offsetHeight;
+            newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
+            newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
+
+            activeTileElement.style.left = `${newLeft}px`;
+            activeTileElement.style.top = `${newTop}px`;
+        }
+
+        function handleDragEnd() {
+            if (!isDragging || !activeTileId) return;
+            
+            const tileData = allTiles.get(activeTileId);
+            
+            // Remove active state class
+            if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
+            
+            // Only save if a move actually occurred
+            if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
+                
+                const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
+                let newRestrictionEndTime = tileData.moveRestrictionEndTime;
+                
+                if (newMovesMade >= MAX_DRAG_SESSIONS) {
+                    newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
+                }
+
+                saveTile({
+                    creatorId: activeTileId, 
+                    movesMade: newMovesMade,
+                    moveRestrictionEndTime: newRestrictionEndTime,
+                    left: activeTileElement.style.left,
+                    top: activeTileElement.style.top,
+                });
+            }
+            
+            isDragging = false;
+            activeTileElement = null; 
+            activeTileId = null;
+        }
+
+        // Attach global drag listeners
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+        document.addEventListener('touchmove', handleDragMove, { passive: false }); 
+        document.addEventListener('touchend', handleDragEnd);
+        document.addEventListener('touchcancel', handleDragEnd);
+
+
+        // --- Tile Rendering ---
+        
+        // openEditModal functionality removed
+        // Removed double-click/tap logic from this function.
+
+        window.renderSingleTile = function(tileId, tileData) {
+            const domId = `tile-${tileId}`;
+            let tileElement = document.getElementById(domId);
+            let cooldownIntervalId = parseInt(tileElement?.dataset?.cooldownInterval || '0');
+
+            if (!tileElement) {
+                tileElement = document.createElement('div');
+                tileElement.id = domId;
+                tileElement.dataset.tileId = tileId;
+                tileElement.classList.add('draggable-tile'); 
+                canvasContainer.appendChild(tileElement);
+            }
+            
+            const isMyTile = tileId === userId;
+            let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
+            const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
+            
+            if (isCooldownExpired && isMyTile) {
+                saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
+                movesLeft = MAX_DRAG_SESSIONS;
+            }
+            
+            const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
+            
+            const colorClass = tileData.color;
+            // Use centralized class constants and merge.
+            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} ${colorClass}`;
+
+            const isLightColor = colorClass.includes('yellow') || colorClass.includes('400');
+            const textColor = isLightColor ? 'text-gray-800' : 'text-white';
+            
+            // --- RESTORED: Full status text and ID ---
+            let statusText = isMyTile ? 'Your Tile (Drag Me!)' : `Shared by ${tileData.name}`;
+
+            let movesDisplayText = '';
+            if (isMyTile) {
+                 movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves: ${movesLeft}/${MAX_DRAG_SESSIONS}`;
+            } else {
+                 movesDisplayText = 'Shared Piece';
+            }
+            // --- End RESTORED ---
+
+            tileElement.innerHTML = `
+                <div class="h-full w-full flex flex-col justify-center items-center p-4 select-none pointer-events-none">
+                    <h2 class="text-3xl font-extrabold tracking-tight ${textColor} text-center select-none">
+                        ${tileData.name}
+                    </h2>
+                    <p class="text-xs italic font-normal ${textColor} opacity-80 mt-2 select-none">
+                        ${statusText}
+                    </p>
+                    <p class="text-xs font-mono text-center mt-2 font-bold ${textColor} opacity-100" id="moves-display-text-${tileId}">
+                        ${movesDisplayText}
+                    </p>
+                    <p class="text-[9px] font-mono text-center mt-1 ${textColor} opacity-50">
+                        ID: ${tileId.substring(0, 8)}...
+                    </p>
+                </div>
+            `;
+            
+            if (isMyTile && !isRestricted) {
+                // Drag Handlers are the only interaction for now
+                tileElement.onmousedown = handleDragStart;
+                tileElement.ontouchstart = handleDragStart;
+                tileElement.style.cursor = 'grab';
+                tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
+                
+                // Remove all edit-related touch/click handlers
+                tileElement.ondblclick = null;
+                tileElement.ontouchend = null;
+
+            } else {
+                // Non-draggable tiles
+                tileElement.onmousedown = null;
+                tileElement.ontouchstart = null;
+                tileElement.style.cursor = 'default';
+                tileElement.classList.remove('active-drag-state'); 
+
+                if (isMyTile && isRestricted) {
+                    // Visual state for cooldown
+                    tileElement.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-inner');
+                } else {
+                    // Visual state for other user's tiles
+                    tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
+                    tileElement.classList.add('opacity-90');
+                }
+            }
+            
+            // Cooldown Interval Logic (remains the same)
+            if (isMyTile && isRestricted) {
+                if (cooldownIntervalId) clearInterval(cooldownIntervalId);
+                
+                const movesDisplayElement = tileElement.querySelector(`#moves-display-text-${tileId}`);
+                
+                const updateRestrictionDisplay = () => {
+                    const now = Date.now();
+                    const timeRemaining = tileData.moveRestrictionEndTime - now;
+
+                    if (timeRemaining <= 0) {
+                        clearInterval(parseInt(tileElement.dataset.cooldownInterval));
+                        saveTile({ movesMade: 0, moveRestrictionEndTime: 0 }); 
+                        return; 
+                    }
+
+                    const secondsTotal = Math.ceil(timeRemaining / 1000);
+                    const minutes = Math.floor(secondsTotal / 60);
+                    const seconds = secondsTotal % 60;
+                    const displayTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
+                    
+                    if(movesDisplayElement) movesDisplayElement.textContent = `COOLDOWN: ${displayTime}`;
+                };
+                
+                updateRestrictionDisplay(); 
+                const newIntervalId = setInterval(updateRestrictionDisplay, 1000);
+                tileElement.dataset.cooldownInterval = newIntervalId;
+            } else if (cooldownIntervalId) {
+                 clearInterval(cooldownIntervalId);
+                 tileElement.dataset.cooldownInterval = '0';
+            }
+
+            tileElement.style.left = tileData.left; 
+            tileElement.style.top = tileData.top; 
+        }
+
+        window.renderAllTiles = function() {
+            const existingTileIds = new Set();
+            canvasContainer.querySelectorAll('.draggable-tile').forEach(el => {
+                existingTileIds.add(el.dataset.tileId);
+            });
+            
+            for (const [id, data] of allTiles.entries()) {
+                window.renderSingleTile(id, data);
+                existingTileIds.delete(id); 
+            }
+            
+            existingTileIds.forEach(idToRemove => {
+                const element = document.getElementById(`tile-${idToRemove}`);
+                if (element) {
+                    const intervalId = parseInt(element.dataset.cooldownInterval || '0');
+                    if(intervalId) clearInterval(intervalId);
+                    element.remove();
+                }
+            });
+        }
+
+
+        // --- Event Binding for Modals ---
+        
+        function applyRing(colorClass, containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            container.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('color-selected'));
+            const currentSwatch = container.querySelector(`[data-color="${colorClass}"]`);
+            if (currentSwatch) {
+                currentSwatch.classList.add('color-selected');
+            }
+        }
+
+        function renderColorSwatches(containerId, initialColor) {
+            const container = document.getElementById(containerId);
+            const button = document.getElementById('submit-button');
+            if (!container) return;
+
+            // Clear previous swatches if any
+            container.innerHTML = ''; 
+
+            Object.entries(COLORS).forEach(([name, colorClass]) => {
+                const swatch = document.createElement('button');
+                swatch.type = 'button';
+                swatch.dataset.color = colorClass;
+                swatch.title = name;
+                swatch.className = `color-swatch w-8 h-8 rounded-full shadow-md hover:ring-2 hover:ring-offset-2 hover:ring-gray-300 ${colorClass} transition duration-150 ease-in-out`;
+                
+                const selectColorHandler = (e) => {
+                    e.preventDefault(); 
+                    selectedColor = colorClass;
+                    applyRing(colorClass, containerId);
+                    if (button) button.disabled = document.getElementById('name-input').value.trim().length === 0;
+                };
+
+                swatch.addEventListener('mousedown', selectColorHandler);
+                swatch.addEventListener('touchstart', selectColorHandler);
+
+                container.appendChild(swatch);
+            });
+            
+            applyRing(initialColor, containerId);
+        }
+
+        function setupPromptHandlers() {
+            // --- Create Modal Handlers ---
+            const createNameInput = document.getElementById('name-input');
+            const createButton = document.getElementById('submit-button');
+            
+            // Initial color swatch rendering for the creation modal
+            renderColorSwatches('color-picker', selectedColor);
+
+            const checkCreateInput = () => {
+                const name = createNameInput.value.trim();
+                createButton.disabled = name.length === 0;
+            };
+            
+            createNameInput.addEventListener('keyup', checkCreateInput); 
+            createNameInput.addEventListener('input', checkCreateInput); 
+            checkCreateInput();
+
+
+            const createNewTile = () => {
+                const name = createNameInput.value.trim();
+                if (!name || name.length === 0 || !userId) {
+                     if(!userId) console.warn("Cannot create tile: Authentication in progress or failed.");
+                     showModal(createPromptModal); 
+                     return;
+                }
+                
+                hideModal(createPromptModal);
+                
+                const creationDate = new Date().toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
+                
+                const size = window.getCurrentTileSize();
+                const initialLeft = `${(window.innerWidth / 2) - (size / 2)}px`;
+                const initialTop = `${(window.innerHeight / 2) - (size / 2)}px`;
+                
+                const newTileData = {
+                    creatorId: userId, 
+                    name: name,
+                    color: selectedColor,
+                    left: initialLeft,
+                    top: initialTop,
+                    createdAt: creationDate,
+                    movesMade: 0, 
+                    moveRestrictionEndTime: 0,
+                };
+                
+                saveTile(newTileData);
+            };
+
+            createButton.addEventListener('click', createNewTile);
+            createButton.addEventListener('touchend', (e) => { e.preventDefault(); createNewTile(); });
+            createNameInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !createButton.disabled) createNewTile();
+            });
+
+            // Removed Edit Modal Handlers
+        }
+
+
+        // --- Core Execution Flow ---
+        
+        // 1. Setup prompt handlers immediately for responsiveness
+        setupPromptHandlers();
+
+        // 2. Start Firebase initialization immediately on DOMContentLoaded
+        document.addEventListener('DOMContentLoaded', setupAuthAndData);
+        
+    </script>
+</body>
+</html>
