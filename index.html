@@ -2,23 +2,31 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- CRITICAL FIX: Disabled user scaling (pinch-to-zoom) for stable mobile interaction -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Shared Draggable Image Tiles</title>
     
     <!-- Load Tailwind CSS for modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        
+        /* FIX: Ensure HTML and Body use full height and prevent overflow for mobile stability */
+        html, body {
+            height: 100%;
+            overflow: hidden; 
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            /* Tiled Background Image from GitHub Raw Content */
             background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
             background-repeat: repeat;
             background-color: #f0f3f6; /* Fallback color */
-            background-size: 200px 200px; /* Adjust size to make the tile visible */
+            background-size: 200px 200px; 
             min-height: 100vh;
             margin: 0;
-            overflow: hidden; 
+            /* Prevents common default browser touch gestures like pan/zoom */
+            touch-action: none; 
         }
         #canvas-container {
              position: absolute;
@@ -26,26 +34,27 @@
              width: 100%;
              height: 100%;
         }
-        /* Hard angled corners */
+        
         .draggable-tile {
             position: absolute;
             user-select: none;
             cursor: grab;
             transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
+            /* This is critical for mobile image stability: ensure background image fits */
             background-size: contain; 
             background-repeat: no-repeat;
             background-position: center;
-            background-color: #3b82f6; /* Fallback blue */
+            background-color: #3b82f6; 
             border-radius: 0; 
             will-change: transform;
         }
-        /* Visual feedback for when the tile is actively being dragged */
+        
         .draggable-tile:active, .draggable-tile.active-drag-state {
             cursor: grabbing;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
             z-index: 20; 
-            transform: scale(1.01); /* Slight lift */
+            transform: scale(1.01); 
         }
         .prompt-modal-overlay {
             position: fixed; 
@@ -58,15 +67,10 @@
             overflow-y: auto; 
             padding: 20px 0;
         }
-        /* Custom class for image preview */
-        .image-preview {
-            background-size: cover;
-            background-position: center;
-        }
-        /* The custom size classes for 4:5 aspect ratio */
+
         .size-rect-sm {
-            width: 192px; /* w-48 equivalent */
-            height: 240px; /* 192 * 5/4 */
+            width: 192px; 
+            height: 240px; 
         }
         @media (min-width: 640px) {
             .size-rect-lg {
@@ -74,7 +78,7 @@
                 height: 500px;
             }
         }
-        /* Styles for the info tag and toggle button */
+        
         .info-tag {
             position: absolute;
             bottom: 0;
@@ -90,8 +94,6 @@
             transform: translateY(100%); 
             transition: opacity 0.3s ease, transform 0.3s ease;
             z-index: 15; 
-            border-bottom-left-radius: 0; 
-            border-bottom-right-radius: 0; 
             pointer-events: none; 
         }
         .info-tag.visible {
@@ -114,8 +116,6 @@
             font-size: 1.25rem; 
             cursor: pointer;
             z-index: 25; 
-            border-top-left-radius: 0; 
-            border-bottom-right-radius: 0; 
             transition: background-color 0.2s ease;
         }
         .info-toggle-button:hover {
@@ -147,7 +147,7 @@
                     maxlength="15"
                 >
                 
-                <!-- Image Upload Section (Restored) -->
+                <!-- Image Upload Section -->
                 <div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600">Upload and Compress Image (PNG/JPG)</p>
                     <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
@@ -199,7 +199,7 @@
         const userStatusText = document.getElementById('user-status-text');
         
         let allTiles = new Map(); 
-        let uploadedBase64Image = null; // Stores the *compressed* image data for the new tile
+        let uploadedBase64Image = null; 
         
         // Drag limit constants
         const MAX_DRAG_SESSIONS = 6;
@@ -213,8 +213,8 @@
         let offsetY = 0;
         
         // NEW SIZE CONSTANTS (4:5 Portrait Ratio, max 400x500)
-        const TILE_WIDTH_SM = 192; // w-48 equivalent
-        const TILE_HEIGHT_SM = 240; // 192 * 5/4 
+        const TILE_WIDTH_SM = 192; 
+        const TILE_HEIGHT_SM = 240; 
         const TILE_WIDTH_LG = 400; 
         const TILE_HEIGHT_LG = 500; 
         
@@ -226,8 +226,6 @@
         /**
          * Resizes and compresses an image file using canvas to ensure it stays
          * well under the 1MB Firestore document limit.
-         * @param {File} file The image file uploaded by the user.
-         * @returns {Promise<string>} Compressed Base64 string of the image.
          */
         function resizeAndCompressImage(file) {
             return new Promise((resolve, reject) => {
@@ -239,8 +237,7 @@
                     img.src = readerEvent.target.result;
                     
                     img.onload = () => {
-                        const MAX_WIDTH = 800; // Max width/height dimension in pixels
-                        const MAX_HEIGHT = 800;
+                        const MAX_DIMENSION = 800; // Max width/height dimension in pixels
                         const MIME_TYPE = 'image/jpeg';
                         const QUALITY = 0.7; // 70% compression quality
 
@@ -248,15 +245,13 @@
                         let height = img.height;
 
                         // Calculate new dimensions while maintaining aspect ratio
-                        if (width > height) {
-                            if (width > MAX_WIDTH) {
-                                height = Math.round(height * (MAX_WIDTH / width));
-                                width = MAX_WIDTH;
-                            }
-                        } else {
-                            if (height > MAX_HEIGHT) {
-                                width = Math.round(width * (MAX_HEIGHT / height));
-                                height = MAX_HEIGHT;
+                        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+                            if (width > height) {
+                                height = Math.round(height * (MAX_DIMENSION / width));
+                                width = MAX_DIMENSION;
+                            } else {
+                                width = Math.round(width * (MAX_DIMENSION / height));
+                                height = MAX_DIMENSION;
                             }
                         }
 
@@ -305,11 +300,9 @@
 
             const tileRef = getTileDocRef(tileId);
             try {
-                // Ensure data is still small enough, though compression should have handled this
                 const size = JSON.stringify(data.base64Image || '').length;
-                if (size > 1024 * 700) { // 700KB safety limit
+                if (size > 1024 * 700) { 
                      console.error("Compressed image is still too large! Size:", size, "bytes");
-                     // This should not happen with the current compression settings but serves as a final safeguard.
                      return;
                 }
                 await setDoc(tileRef, data, { merge: true });
@@ -320,28 +313,31 @@
         
         /**
          * Checks if the proposed position of the target tile overlaps with any other tile.
+         * targetId is only used to exclude the tile being dragged from the check.
          */
         function checkCollision(targetId, newLeft, newTop) {
-            const targetElement = document.getElementById(`tile-${targetId}`);
-            if (!targetElement) return false;
-
-            const targetW = targetElement.offsetWidth;
-            const targetH = targetElement.offsetHeight;
+            const { width: targetW, height: targetH } = window.getCurrentTileDimensions();
+            
             const targetRight = newLeft + targetW;
             const targetBottom = newTop + targetH;
 
             for (const [id, data] of allTiles.entries()) {
-                if (id === targetId) continue; // Don't check against self
-
+                if (id === targetId) continue; 
+                
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
                 const otherW = otherElement.offsetWidth;
                 const otherH = otherElement.offsetHeight;
                 
-                const otherRect = otherElement.getBoundingClientRect();
-                const otherLeft = otherRect.left;
-                const otherTop = otherRect.top;
+                // Get position from the element's style property if available, otherwise fall back to data
+                let otherLeft = parseFloat(otherElement.style.left);
+                let otherTop = parseFloat(otherElement.style.top);
+                
+                if (isNaN(otherLeft) && data.left) otherLeft = parseFloat(data.left);
+                if (isNaN(otherTop) && data.top) otherTop = parseFloat(data.top);
+
+                if (isNaN(otherLeft) || isNaN(otherTop)) continue; 
 
                 const overlapsX = newLeft < (otherLeft + otherW) && targetRight > otherLeft;
                 const overlapsY = newTop < (otherTop + otherH) && targetBottom > otherTop;
@@ -351,6 +347,99 @@
                 }
             }
             return false; 
+        }
+
+        /**
+         * Finds the closest non-overlapping position near the center of the viewport.
+         */
+        function findSafeInitialPosition(tileWidth, tileHeight) {
+            const viewportW = window.innerWidth;
+            const viewportH = window.innerHeight;
+
+            // Calculate exact center position
+            let initialLeft = Math.round((viewportW / 2) - (tileWidth / 2));
+            let initialTop = Math.round((viewportH / 2) - (tileHeight / 2));
+
+            // Start simple non-overlapping check at center
+            if (!checkCollision(null, initialLeft, initialTop)) {
+                return { left: `${initialLeft}px`, top: `${initialTop}px` };
+            }
+
+            // Simple spiral search parameters
+            const maxOffset = Math.max(viewportW, viewportH) / 3; // Search up to 1/3 of the screen size
+            const step = 20; // 20px step distance
+
+            let offset = step; // Start spiral at the first layer out
+
+            // Spiral search pattern: 1R, 1U, 2L, 2D, 3R, 3U, 4L, 4D...
+            while (offset <= maxOffset) {
+                // R, U, L, D movements for the current offset square
+                
+                // 1. Right side check (x=offset, y runs -offset to offset)
+                for (let y = -offset; y <= offset; y += step) {
+                    let x = offset;
+                    let checkLeft = initialLeft + x;
+                    let checkTop = initialTop + y;
+                    
+                    if (checkLeft >= 0 && checkTop >= 0 && 
+                        checkLeft + tileWidth <= viewportW && 
+                        checkTop + tileHeight <= viewportH) {
+                        if (!checkCollision(null, checkLeft, checkTop)) {
+                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                        }
+                    }
+                }
+                
+                // 2. Left side check (x=-offset, y runs -offset to offset)
+                for (let y = -offset; y <= offset; y += step) {
+                    let x = -offset;
+                    let checkLeft = initialLeft + x;
+                    let checkTop = initialTop + y;
+                    
+                    if (checkLeft >= 0 && checkTop >= 0 && 
+                        checkLeft + tileWidth <= viewportW && 
+                        checkTop + tileHeight <= viewportH) {
+                        if (!checkCollision(null, checkLeft, checkTop)) {
+                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                        }
+                    }
+                }
+
+                // 3. Top side check (y=-offset, x runs -offset+step to offset-step)
+                for (let x = -offset + step; x < offset; x += step) {
+                    let y = -offset;
+                    let checkLeft = initialLeft + x;
+                    let checkTop = initialTop + y;
+                    
+                    if (checkLeft >= 0 && checkTop >= 0 && 
+                        checkLeft + tileWidth <= viewportW && 
+                        checkTop + tileHeight <= viewportH) {
+                        if (!checkCollision(null, checkLeft, checkTop)) {
+                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                        }
+                    }
+                }
+                
+                // 4. Bottom side check (y=offset, x runs -offset+step to offset-step)
+                for (let x = -offset + step; x < offset; x += step) {
+                    let y = offset;
+                    let checkLeft = initialLeft + x;
+                    let checkTop = initialTop + y;
+                    
+                    if (checkLeft >= 0 && checkTop >= 0 && 
+                        checkLeft + tileWidth <= viewportW && 
+                        checkTop + tileHeight <= viewportH) {
+                        if (!checkCollision(null, checkLeft, checkTop)) {
+                            return { left: `${checkLeft}px`, top: `${checkTop}px` };
+                        }
+                    }
+                }
+
+                offset += step; // Expand the search radius
+            }
+            
+            // Fallback: If no space is found after extensive searching, return the initial center position
+            return { left: `${initialLeft}px`, top: `${initialTop}px` };
         }
         
         // --- UI Control ---
@@ -381,6 +470,7 @@
                 allTiles = currentTiles;
                 window.renderAllTiles();
                 
+                // Only show the creation modal if the user is authenticated and hasn't created a tile yet.
                 if (authReady && userId && !allTiles.has(userId)) {
                     createPromptModal.classList.remove('hidden');
                 } else {
@@ -399,7 +489,6 @@
             const createButton = document.getElementById('submit-button');
             
             try {
-                // 1. CRITICAL CONFIGURATION CHECK & FALLBACK LOGIC
                 if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
                     firebaseConfig = {
                         apiKey: manualApiKeyFallback,
@@ -424,14 +513,12 @@
                     }
                 }
 
-                // 2. Initialize services
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
                 if (userStatusText) userStatusText.textContent = "Status: Authenticating user...";
                 
-                // 3. Set up Auth State Change Listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
@@ -448,7 +535,6 @@
                     }
                 });
                 
-                // 4. Sign-in attempt
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
@@ -463,7 +549,7 @@
             }
         }
         
-        // --- Drag Handlers (No change in logic) ---
+        // --- Drag Handlers ---
         
         function handleDragStart(e) {
             if (!userId) {
@@ -479,6 +565,7 @@
                 return;
             }
             
+            // Block multi-touch gestures
             if (e.touches && e.touches.length > 1) {
                 return;
             }
@@ -500,6 +587,7 @@
 
         function handleDragMove(e) {
             if (!isDragging || !activeTileElement) return;
+            // Prevent default touch scrolling/gestures
             e.preventDefault();
 
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -513,7 +601,7 @@
             const elementW = activeTileElement.offsetWidth;
             const elementH = activeTileElement.offsetHeight;
             
-            // Boundary check
+            // Boundary check: ensures tiles never leave the viewport 
             newLeft = Math.max(0, Math.min(newLeft, viewportW - elementW));
             newTop = Math.max(0, Math.min(newTop, viewportH - elementH));
             
@@ -563,6 +651,7 @@
         // Attach global drag listeners
         document.addEventListener('mousemove', handleDragMove);
         document.addEventListener('mouseup', handleDragEnd);
+        // Use passive: false for touchmove to ensure preventDefault works
         document.addEventListener('touchmove', handleDragMove, { passive: false }); 
         document.addEventListener('touchend', handleDragEnd);
         document.addEventListener('touchcancel', handleDragEnd);
@@ -596,10 +685,8 @@
             
             tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
 
-            // --- USE COMPRESSED BASE64 IMAGE ---
             if (tileData.base64Image) {
                 tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
-                // Keep the gray fallback for stable visibility if image fails (but shouldn't now)
                 tileElement.style.backgroundColor = '#d1d5db'; 
             } else {
                 console.warn(`Rendering tile ${tileId}. Missing or undefined base64Image data.`);
@@ -750,12 +837,11 @@
         
         function setupPromptHandlers() {
             const createNameInput = document.getElementById('name-input');
-            const imageUploadInput = document.getElementById('image-upload'); // RESTORED
+            const imageUploadInput = document.getElementById('image-upload'); 
             const imagePreviewElement = document.getElementById('image-preview');
             const createButton = document.getElementById('submit-button');
             const compressionStatus = document.getElementById('compression-status');
             
-            // Function to check local inputs only.
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; 
@@ -778,7 +864,6 @@
                     return;
                 }
                 
-                // --- Start Compression/Loading Feedback ---
                 uploadedBase64Image = null; // Disable button while processing
                 checkCreateInput();
                 
@@ -836,14 +921,14 @@
                     day: 'numeric' 
                 });
                 
+                // Get safe, non-overlapping initial position
                 const { width, height } = window.getCurrentTileDimensions(); 
-                const initialLeft = `${(window.innerWidth / 2) - (width / 2)}px`;
-                const initialTop = `${(window.innerHeight / 2) - (height / 2)}px`;
+                const { left: initialLeft, top: initialTop } = findSafeInitialPosition(width, height);
                 
                 const newTileData = {
                     creatorId: userId, 
                     name: name,
-                    base64Image: uploadedBase64Image, // NOW SAVING THE COMPRESSED, STABLE DATA
+                    base64Image: uploadedBase64Image, 
                     left: initialLeft,
                     top: initialTop,
                     createdAt: creationDate,
