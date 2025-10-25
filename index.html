@@ -94,8 +94,23 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // =========================================================================================================
+        // ⭐ IMPORTANT: CONFIGURATION REQUIRED FOR SHARED FUNCTIONALITY ⭐
+        // PASTE YOUR OWN FIREBASE CONFIG OBJECT HERE INSTEAD OF THE EMPTY JSON '{}'
+        // You MUST replace '{}' with your actual Firebase config object: 
+        // Example: { apiKey: "AIza...", authDomain: "project.firebaseapp.com", projectId: "project-id", ... }
+        // =========================================================================================================
+        const FIREBASE_CONFIG_JSON = '{}'; 
+        const FIREBASE_APP_ID = 'default-app-id'; // Use your project ID or desired namespace here
+        // For custom token auth, paste it here. For anonymous sign-in, leave this empty.
+        const AUTH_TOKEN = ''; 
+        // =========================================================================================================
+
+        
         // --- Global Firebase State Variables ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const appId = FIREBASE_APP_ID;
+        const firebaseConfig = JSON.parse(FIREBASE_CONFIG_JSON);
+        const initialAuthToken = AUTH_TOKEN;
 
         let app = null;
         let db = null;
@@ -162,7 +177,12 @@
                     console.error("Error saving tile data:", error);
                 }
             } else {
-                 console.warn("Save requested, but no valid db connection.");
+                 // In local-only mode, we still update the local state to prevent visual issues
+                 console.warn("Save requested, but no valid db connection. Running local save.");
+                 if (userId && allTiles.has(userId)) {
+                      allTiles.set(userId, {...allTiles.get(userId), ...data});
+                      renderAllTiles();
+                 }
             }
         }
         
@@ -205,7 +225,12 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                hideInputPrompt();
+                // If a listener error occurs, ensure the local tile is shown if it exists.
+                if (userId && allTiles.has(userId)) {
+                     hideInputPrompt();
+                } else {
+                    showInputPrompt();
+                }
             });
         }
         
@@ -213,15 +238,15 @@
          * Initializes Firebase, sets up Auth, and starts the data listener.
          */
         function setupAuthAndDataDeferred() {
-             const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
             
+            // Check if valid config was provided (i.e., not the default empty '{}')
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
                     // Initialize Firebase services
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    setLogLevel('Debug');
+                    // setLogLevel('Debug'); // Uncomment for debugging
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
 
@@ -242,8 +267,8 @@
                     });
                     
                     // Attempt sign-in (non-blocking)
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token.length > 0) {
-                        signInWithCustomToken(auth, __initial_auth_token)
+                    if (initialAuthToken.length > 0) {
+                        signInWithCustomToken(auth, initialAuthToken)
                             .catch(error => console.error("Custom Sign-in Failed (non-blocking):", error));
                     } else {
                         signInAnonymously(auth)
@@ -256,7 +281,24 @@
                     showInputPrompt();
                 }
             } else {
+                // FALLBACK: Run immediately if config is missing (this prevents the hang when config isn't provided)
                 if (userStatusText) userStatusText.textContent = "Status: Firebase config missing. Local session only.";
+                // We set a temporary ID for local-only functionality
+                userId = 'local-user';
+                // Create a temporary local tile to allow the user to immediately interact
+                if (!allTiles.has(userId)) {
+                    allTiles.set(userId, {
+                        creatorId: userId, 
+                        name: 'Local User',
+                        color: COLORS['Blue'],
+                        left: '50%',
+                        top: '50%',
+                        createdAt: new Date().toLocaleDateString('en-US'),
+                        movesMade: 0, 
+                        moveRestrictionEndTime: 0,
+                    });
+                    renderAllTiles();
+                }
                 showInputPrompt();
             }
         }
@@ -268,6 +310,7 @@
             const tileId = tileElement.dataset.tileId;
             const tileData = allTiles.get(tileId);
 
+            // Only allow drag if the tile belongs to the current user (or is the local-only tile)
             if (tileData.creatorId !== userId) return;
             
             if (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now()) return;
@@ -317,6 +360,7 @@
             // Remove active state class
             if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
             
+            // Check if move is allowed based on cooldown/limit
             if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
                 
                 const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
@@ -582,6 +626,11 @@
                     movesMade: 0, 
                     moveRestrictionEndTime: 0,
                 };
+                
+                // Clear any old local-user tile if a new one is created after auth completes
+                if (allTiles.has('local-user') && userId !== 'local-user') {
+                    allTiles.delete('local-user');
+                }
 
                 saveTile(newTileData);
             };
