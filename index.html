@@ -174,7 +174,7 @@
         // We trust the runtime environment to provide these variables.
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        let firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
         
         // --- Global Firebase State Variables ---
@@ -182,7 +182,7 @@
         let db = null;
         let auth = null;
         let userId = null; 
-        let authReady = false; // Flag to indicate if we have a userId or confirmed failure
+        let authReady = false; // Flag to indicate if we have finished the auth check (success or fail)
         
         // --- Global App State & DOM Elements ---
         const canvasContainer = document.getElementById('canvas-container');
@@ -234,10 +234,9 @@
             const tileId = data.creatorId || userId;
             if (!tileId) return console.error("Cannot save tile: missing ID.");
 
-            // We trust that if userId and db exist, we should proceed.
+            // CRITICAL CHECK: Block save if DB/User is not ready
             if (!userId || !db) {
-                 // This shouldn't happen if the button is correctly disabled, but we log the error.
-                 console.error("Save blocked: Firebase services are not ready.");
+                 console.error("Save blocked: Firebase services are not ready or user is unauthorized.");
                  return; 
             }
 
@@ -312,7 +311,10 @@
         // --- Data Listener and Auth Setup ---
 
         function startDataListener() {
-            if (!db) return;
+            if (!db) {
+                console.warn("Cannot start data listener: Database not initialized.");
+                return;
+            }
             
             const sharedTilesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'shared_tiles');
             
@@ -329,7 +331,6 @@
                 window.renderAllTiles();
                 
                 // Show prompt if the user is authenticated but hasn't created a tile yet.
-                // This is the core check that prevents "working without firebase"
                 if (authReady && userId && !allTiles.has(userId)) {
                     createPromptModal.classList.remove('hidden');
                 } else {
@@ -338,44 +339,70 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                // If listener fails, assume we can't save/share and keep the modal hidden
-                // or update status text if needed.
             });
         }
         
         /**
-         * Initializes Firebase and starts Auth immediately on load, assuming success.
+         * Initializes Firebase and starts Auth. Includes robust configuration check.
          */
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
+            
+            // Fallback ID provided by the user in case the environment fails to inject it.
+            const manualProjectIdFallback = "doings-7717f"; 
 
             try {
-                // 1. Initialize services
+                // 1. CRITICAL CONFIGURATION CHECK
+                if (!firebaseConfig.projectId) {
+                    // If project ID is missing from environment config, use the manual fallback.
+                    firebaseConfig.projectId = manualProjectIdFallback;
+                    
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-yellow-600 font-bold">WARNING: Using fallback Project ID: ${manualProjectIdFallback}</span>`;
+                }
+
+
+                // Final check before initialization attempt
+                if (!firebaseConfig.projectId) {
+                    console.error("Firebase config is missing Project ID. Skipping initialization.");
+                    userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Database Configuration Missing. Tiles are read-only.</span>`;
+                    
+                    // Mark auth as ready (finished check) but with no user/db
+                    authReady = true; 
+                    userId = null; 
+                    
+                    // If DB fails, we assume no personal tile can be created, so we hide the modal initially
+                    hideModal(createPromptModal); 
+                    
+                    if(createButton.checkInputStatus) createButton.checkInputStatus();
+                    return;
+                }
+
+
+                // 2. Initialize services (only runs if config is valid)
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
                 if (userStatusText) userStatusText.textContent = "Status: Authenticating user...";
                 
-                // 2. Set up Auth State Change Listener
+                // 3. Set up Auth State Change Listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
                         authReady = true;
                         startDataListener(); 
                         if (userStatusText) userStatusText.innerHTML = `Signed In. ID: <span class="font-bold text-blue-600">${userId}</span>`;
-                        // Re-evaluate button status based on new userId
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     } else {
                         userId = null; 
-                        authReady = true; // Still ready, but failed to get user.
+                        authReady = true; 
                         console.warn("User signed out or auth failed.");
                         if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Sign-in Failed.</span>`;
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     }
                 });
                 
-                // 3. Sign-in attempt
+                // 4. Sign-in attempt
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
@@ -383,18 +410,18 @@
                 }
 
             } catch (error) {
-                // Catches synchronous errors during initialization (e.g., config error)
+                // Catches synchronous errors during initialization (e.g., Firebase internal error)
                 userId = null;
                 authReady = true;
                 console.error("FATAL: Error during Firebase initialization:", error);
-                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Initialization Failed.</span>`;
+                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Initialization Failed. Check Console.</span>`;
             }
         }
         
         // --- Drag Handlers ---
         
         function handleDragStart(e) {
-            // DRAG CHECK: Block drag if user is not the owner or is on cooldown.
+            // DRAG CHECK: Block drag if user is not the owner, is on cooldown, or cannot save state.
             if (!userId) {
                  console.warn("Drag blocked: Cannot save state without active user ID.");
                  return;
@@ -697,9 +724,8 @@
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; 
                 
-                // Button is enabled based on local inputs ONLY. We trust that 
-                // the modal itself is only visible if Auth is successful.
-                createButton.disabled = !(nameValid && imageValid);
+                // Button is enabled based on local inputs ONLY, AND if Firebase is ready.
+                createButton.disabled = !(nameValid && imageValid && authReady && userId);
             };
 
             // Expose the check function on the button
