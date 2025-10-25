@@ -171,7 +171,6 @@
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
-        // FIX: Corrected token assignment to use __initial_auth_token
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
         // =========================================================================================================
 
@@ -349,50 +348,60 @@
         /**
          * Initializes Firebase and starts Auth immediately on load.
          */
-        function setupAuthAndData() {
+        async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
 
             if (Object.keys(firebaseConfig).length > 0) {
                 try {
+                    // Initialize services
                     app = initializeApp(firebaseConfig);
                     db = getFirestore(app);
                     auth = getAuth(app);
                     
                     if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
                     
-                    // Set up Auth State Change Listener
+                    // Set up Auth State Change Listener (Must be before sign-in attempt)
                     onAuthStateChanged(auth, async (user) => {
                         if (user) {
                             userId = user.uid;
                             startDataListener(); 
                             if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
 
-                            // CRITICAL FIX: Trigger validation check now that we have the userId
+                            // Trigger validation check now that we have the userId
                             if(createButton.checkInputStatus) createButton.checkInputStatus();
 
                         } else {
                             userId = null; 
-                            console.warn("User signed out or auth failed.");
-                            if (userStatusText) userStatusText.textContent = "Status: Sign-in failed. Please refresh.";
-                            showModal(createPromptModal);
+                            console.warn("User signed out or auth failed (onAuthStateChanged fired with null user).");
+                            // CRITICAL FIX: Ensure button status is checked even if user is null
+                            if(createButton.checkInputStatus) createButton.checkInputStatus();
                         }
                     });
                     
-                    // Attempt sign-in
-                    if (initialAuthToken) {
-                        signInWithCustomToken(auth, initialAuthToken)
-                             .catch(error => console.error("Custom Sign-in Failed:", error));
-                    } else {
-                        signInAnonymously(auth)
-                            .catch(error => console.error("Anonymous Sign-in Failed:", error));
+                    // CRITICAL FIX: Use async/await on sign-in attempt for clear error surfacing
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                            console.log("Custom Sign-in attempt successful.");
+                        } else {
+                            await signInAnonymously(auth);
+                            console.log("Anonymous Sign-in attempt successful.");
+                        }
+                    } catch (signInError) {
+                        // This block catches sign-in promise rejections.
+                        console.error("CRITICAL: Firebase Sign-in failed.", signInError);
+                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Sign-in Failed. Check console for details.</span>`;
+                        // The onAuthStateChanged listener *should* fire with null user shortly after this.
                     }
 
-
                 } catch (error) {
+                    // This block catches synchronous errors during initialization (initializeApp, getFirestore, etc.)
                     console.error("FATAL: Error during Firebase initialization:", error);
-                    if (userStatusText) userStatusText.textContent = "Status: FATAL ERROR - Check console and configuration.";
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Initialization failed.</span>`;
                     showModal(createPromptModal);
                 }
+            } else {
+                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Firebase config missing.</span>`;
             }
         }
         
@@ -693,6 +702,11 @@
                 
                 // CRITICAL FIX: Only enable if all three conditions are met.
                 createButton.disabled = !(nameValid && imageValid && authReady);
+                
+                if (nameValid && imageValid && !authReady) {
+                    // This is the state where everything is ready except auth.
+                    if (userStatusText) userStatusText.innerHTML = `Please wait, confirming identity...`;
+                }
             };
 
             // Expose the check function on the button for use in setupAuthAndData
@@ -748,8 +762,8 @@
                     return;
                 }
                 if (!userId) {
-                    console.error("Critical Error: Clicked enabled button but userId is null. Race condition failure.");
-                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: AUTH FAILED. Please wait and try again.</span>`;
+                    console.error("Critical Error: Clicked enabled button but userId is null. Auth failed.");
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: AUTH FAILED. Please refresh.</span>`;
                     return;
                 }
                 
@@ -796,8 +810,8 @@
         // 1. Setup prompt handlers immediately for responsiveness
         setupPromptHandlers();
 
-        // 2. Start Firebase initialization immediately on DOMContentLoaded
-        document.addEventListener('DOMContentLoaded', setupAuthAndData);
+        // 2. Start Firebase initialization immediately 
+        setupAuthAndData();
         
     </script>
 </body>
