@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shared Draggable Image Tiles</title>
-    <!-- Load Tailwind CSS for modern styling --><script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Load Tailwind CSS for modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         body {
@@ -115,13 +117,16 @@
 </head>
 <body onresize="renderAllTiles()">
     
-    <!-- Main container for all draggable tiles --><section id="canvas-container"></section>
+    <!-- Main container for all draggable tiles -->
+    <section id="canvas-container"></section>
 
-    <!-- INPUT PROMPT MODAL: Visible until the user creates a tile --><div id="input-prompt-modal" class="prompt-modal-overlay">
+    <!-- INPUT PROMPT MODAL: Visible until the user creates a tile -->
+    <div id="input-prompt-modal" class="prompt-modal-overlay">
         <div class="w-full max-w-sm mx-4 p-6 bg-white shadow-xl rounded-xl transform transition-all pointer-events-auto">
             <div class="space-y-4">
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Image Tile</p>
-                <!-- Status text for Firebase initialization --><p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
+                <!-- Status text for Firebase initialization -->
+                <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
                     Status: UI loaded. Initializing services...
                 </p>
 
@@ -134,7 +139,8 @@
                     maxlength="15"
                 >
                 
-                <!-- NEW: Image Upload Section --><div class="flex flex-col space-y-2">
+                <!-- NEW: Image Upload Section -->
+                <div class="flex flex-col space-y-2">
                     <p class="text-sm font-medium text-gray-600">Upload Your Background Image (PNG/JPG)</p>
                     <input type="file" id="image-upload" accept="image/png, image/jpeg" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
                     
@@ -165,7 +171,8 @@
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null;
+        // FIX: Corrected token assignment to use __initial_auth_token
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
         // =========================================================================================================
 
         
@@ -561,10 +568,12 @@
                         ${movesDisplayText}
                     </p>
                 </div>
-                <!-- Info Tag --><div id="info-tag-${tileId}" class="info-tag">
+                <!-- Hidden Info Tag -->
+                <div id="info-tag-${tileId}" class="info-tag">
                     ${infoTagContent}
                 </div>
-                <!-- Toggle Button --><button id="info-toggle-${tileId}" class="info-toggle-button">
+                <!-- Toggle Button -->
+                <button id="info-toggle-${tileId}" class="info-toggle-button">
                     +
                 </button>
             `;
@@ -579,6 +588,7 @@
                     infoTag.classList.toggle('visible');
                     toggleButton.textContent = infoTag.classList.contains('visible') ? 'x' : '+';
                 };
+                // Ensure touch events are handled correctly
                 toggleButton.addEventListener('click', toggleInfo);
                 toggleButton.addEventListener('touchend', (e) => {
                     e.preventDefault(); // Prevent ghost clicks
@@ -588,11 +598,13 @@
 
             // Dragging logic
             if (isMyTile && !isRestricted) {
+                // Attach event listeners for drag/touch start
                 tileElement.onmousedown = handleDragStart;
                 tileElement.ontouchstart = handleDragStart;
                 tileElement.style.cursor = 'grab';
                 tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
             } else {
+                // Disable dragging for restricted or foreign tiles
                 tileElement.onmousedown = null;
                 tileElement.ontouchstart = null;
                 tileElement.style.cursor = 'default';
@@ -674,9 +686,14 @@
             const imagePreviewElement = document.getElementById('image-preview');
             const createButton = document.getElementById('submit-button');
             
+            // MODIFIED: Added console logging for debugging.
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; // Check if image data is present
+                
+                // Debugging log for the user
+                console.log(`[Validation Check] Name: ${nameValid}, Image: ${imageValid}, Button Disabled: ${!(nameValid && imageValid)}`);
+                
                 createButton.disabled = !(nameValid && imageValid);
             };
 
@@ -709,11 +726,13 @@
                     imagePreviewElement.textContent = 'Error';
                 }
                 
-                checkCreateInput(); // Final state check
+                checkCreateInput(); // Final state check after image conversion
             });
 
+            // Ensure checkCreateInput is called on every input event for name
             createNameInput.addEventListener('keyup', checkCreateInput); 
             createNameInput.addEventListener('input', checkCreateInput); 
+            
             // Initial check when component loads (in case of cached values)
             checkCreateInput(); 
 
