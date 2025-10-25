@@ -57,13 +57,13 @@
             transform: scale(1.01); 
         }
         
-        /* --- NEW PUSHPIN STYLING --- */
+        /* --- PUSHPIN STYLING --- */
         .pushpin {
             position: absolute;
             width: 24px; 
             height: 24px;
-            /* Raw URL for the pushpin image */
-            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/pushpin%20png.png');
+            /* UPDATED: Using the raw link for the requested pin%20png.png file */
+            background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/pin%20png.png');
             background-size: cover;
             background-repeat: no-repeat;
             z-index: 21; /* Ensure pins are above the tile */
@@ -75,6 +75,14 @@
         .pushpin.bottom-left { bottom: -12px; left: -12px; }
         .pushpin.bottom-right { bottom: -12px; right: -12px; }
         /* --- END PUSHPIN STYLING --- */
+
+        /* --- CONSISTENT SIZE DEFINITION --- */
+        /* Applying the mobile size to ALL viewports for consistent experience */
+        .size-rect-sm {
+            width: 192px; 
+            height: 240px; 
+        }
+        /* --- END CONSISTENT SIZE DEFINITION --- */
 
 
         .prompt-modal-overlay {
@@ -89,16 +97,6 @@
             padding: 20px 0;
         }
 
-        .size-rect-sm {
-            width: 192px; 
-            height: 240px; 
-        }
-        @media (min-width: 640px) {
-            .size-rect-lg {
-                width: 400px; 
-                height: 500px;
-            }
-        }
         
         .info-tag {
             position: absolute;
@@ -233,14 +231,13 @@
         let offsetX = 0;
         let offsetY = 0;
         
-        // NEW SIZE CONSTANTS (4:5 Portrait Ratio, max 400x500)
-        const TILE_WIDTH_SM = 192; 
-        const TILE_HEIGHT_SM = 240; 
-        const TILE_WIDTH_LG = 400; 
-        const TILE_HEIGHT_LG = 500; 
+        // NEW SIZE CONSTANTS (4:5 Portrait Ratio, universally small)
+        const TILE_WIDTH = 192; 
+        const TILE_HEIGHT = 240; 
         
         const TILE_BASE_CLASSES = "shadow-2xl draggable-tile"; 
-        const TILE_SIZE_CLASSES = "size-rect-sm sm:size-rect-lg"; 
+        // Only use the small size class universally
+        const TILE_SIZE_CLASSES = "size-rect-sm"; 
 
         // --- Utility Functions ---
         
@@ -296,12 +293,10 @@
 
         /**
          * Returns the current tile dimensions based on viewport size.
+         * Now returns the universal small size.
          */
         window.getCurrentTileDimensions = function() {
-            if (window.innerWidth >= 640) { // Tailwind 'sm' breakpoint
-                return { width: TILE_WIDTH_LG, height: TILE_HEIGHT_LG };
-            }
-            return { width: TILE_WIDTH_SM, height: TILE_HEIGHT_SM };
+            return { width: TILE_WIDTH, height: TILE_HEIGHT };
         };
         
         function getTileDocRef(tileId) {
@@ -337,7 +332,8 @@
          * targetId is only used to exclude the tile being dragged from the check.
          */
         function checkCollision(targetId, newLeft, newTop) {
-            const { width: targetW, height: targetH } = window.getCurrentTileDimensions();
+            // Use the single fixed size
+            const { width: targetW, height: targetH } = { width: TILE_WIDTH, height: TILE_HEIGHT }; 
             
             const targetRight = newLeft + targetW;
             const targetBottom = newTop + targetH;
@@ -348,8 +344,9 @@
                 const otherElement = document.getElementById(`tile-${id}`);
                 if (!otherElement) continue;
 
-                const otherW = otherElement.offsetWidth;
-                const otherH = otherElement.offsetHeight;
+                // Since all tiles now have the same fixed size, we can use the fixed TILE_WIDTH/HEIGHT
+                const otherW = TILE_WIDTH; 
+                const otherH = TILE_HEIGHT;
                 
                 // Get position from the element's style property if available, otherwise fall back to data
                 let otherLeft = parseFloat(otherElement.style.left);
@@ -703,6 +700,7 @@
             
             const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
             
+            // Use the universal small size class
             tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
 
             if (tileData.base64Image) {
