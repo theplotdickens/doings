@@ -11,7 +11,7 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
         
-        /* FIX: Ensure HTML and Body use full height */
+        /* FIX 1: Enforce full height on document root */
         html, body {
             height: 100%;
             margin: 0;
@@ -20,29 +20,36 @@
 
         body {
             font-family: 'Inter', sans-serif;
+            
+            /* FIX 4: REINSTATE the Tiling Background Texture on the outer body */
+            background-color: #f0f3f6; 
             background-image: url('https://raw.githubusercontent.com/theplotdickens/doings/main/texture_forest_floor_1950_1_thumbnail.jpg');
             background-repeat: repeat;
-            background-color: #f0f3f6; /* Fallback color */
             background-size: 200px 200px; 
-            min-height: 100vh;
-            /* New: Center the viewport wrapper on the desktop screen */
+            
+            height: 100vh;
+            /* FIX 3: Disable all scrolling */
+            overflow: hidden; 
+            
+            /* Centering setup */
             display: flex; 
-            justify-content: center;
-            align-items: center;
-            /* Prevents common default browser touch gestures like pan/zoom */
+            justify-content: center; 
+            align-items: center; /* Vertically center the wrapper on desktop */
             touch-action: none; 
-            overflow-y: auto; /* Allows scrolling on the desktop outside the constrained area */
         }
         
-        /* NEW STYLES: This wrapper enforces the mobile-like dimensions and is centered by the body's flex properties. */
+        /* The wrapper is the strict mobile canvas area */
         #mobile-viewport-wrapper {
-            position: relative; /* Sets context for absolute positioning inside */
+            position: relative; 
             width: 100%; 
-            max-width: 420px; /* Constrains the width to a phone size */
-            height: 100vh; /* Takes full viewport height */
-            background-color: #f9fafb; /* Light background for the mobile area */
-            box-shadow: 0 0 40px rgba(0, 0, 0, 0.2); /* Makes it pop */
-            overflow: hidden; /* Canvas content lives here */
+            max-width: 420px; /* Mobile width constraint */
+            height: 100vh; /* Mobile height constraint (prevents scrolling) */
+            
+            /* FIX 5: Use a clean, solid light background for the active app area */
+            background-color: #f9fafb; 
+            
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.2); /* Subtle shadow to float above the texture */
+            overflow: hidden; /* Guarantees no overflow from tiles */
         }
         
         /* #canvas-container must now be positioned relative to its parent (#mobile-viewport-wrapper) */
@@ -56,7 +63,6 @@
         .draggable-tile {
             position: absolute;
             user-select: none;
-            /* Note: Cursor changes via JS based on drag eligibility */
             transition: box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease;
             z-index: 10; 
             background-size: contain; 
@@ -113,7 +119,7 @@
             justify-content: center;
             align-items: center;
             z-index: 30;
-            overflow-y: auto; 
+            overflow-y: auto; /* Allow internal scrolling if modal content is too tall */
             padding: 20px 0;
         }
         
@@ -581,586 +587,419 @@
             });
         }
         
-        // --- Data Listener and Auth Setup ---
+        // --- Tile Rendering and Drag Limits ---
 
-        function startDataListener() {
-            if (!db) {
-                console.warn("Cannot start data listener: Database not initialized.");
-                return;
-            }
-            
-            const sharedTilesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'shared_tiles');
-            
-            // Set up real-time listener for the entire collection
-            onSnapshot(query(sharedTilesColRef), (querySnapshot) => {
-                let currentTiles = new Map();
-                
-                querySnapshot.forEach((doc) => {
-                    const data = doc.data();
-                    currentTiles.set(doc.id, data);
-                });
-                
-                allTiles = currentTiles;
-                window.renderAllTiles();
-                
-                // Only show the creation modal if the user is authenticated and hasn't created a tile yet.
-                if (authReady && userId && !allTiles.has(userId)) {
-                    createPromptModal.classList.remove('hidden');
-                } else {
-                    hideModal(createPromptModal);
-                }
-                
-            }, (error) => {
-                console.error("Error listening to shared tiles:", error);
-            });
-        }
-        
-        /**
-         * Initializes Firebase and starts Auth. Includes robust configuration check.
-         */
-        async function setupAuthAndData() {
-            const createButton = document.getElementById('submit-button');
-            
-            try {
-                if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                    firebaseConfig = {
-                        apiKey: manualApiKeyFallback,
-                        authDomain: `${manualProjectIdFallback}.firebaseapp.com`,
-                        projectId: manualProjectIdFallback,
-                        storageBucket: `${manualProjectIdFallback}.appspot.com`,
-                        messagingSenderId: "1234567890", 
-                        appId: "1:1234567890:web:1234567890abcdef",
-                    };
-                    
-                    let statusHtml = `Using manual configuration for Project ID and API Key.`;
-                    
-                    if (userStatusText) userStatusText.innerHTML = statusHtml;
+        function createTileElement(tileData) {
+            const tileId = `tile-${tileData.creatorId}`;
+            let tileElement = document.getElementById(tileId);
 
-                    if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
-                        console.error("Firebase config is completely missing even with fallbacks. Cannot proceed.");
-                        authReady = true; 
-                        userId = null; 
-                        hideModal(createPromptModal); 
-                        if(createButton.checkInputStatus) createButton.checkInputStatus();
+            // Create new element if it doesn't exist
+            if (!tileElement) {
+                tileElement = document.createElement('div');
+                tileElement.id = tileId;
+                tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES} rounded-xl`; 
+                tileElement.dataset.creatorId = tileData.creatorId;
+
+                // Inner HTML structure (Image, Pin, Info Button, Info Tag)
+                tileElement.innerHTML = `
+                    <div class="pushpin top-left"></div>
+                    <div class="pushpin top-right"></div>
+                    <div class="pushpin bottom-left"></div>
+                    <div class="pushpin bottom-right"></div>
+                    <button class="info-toggle-button" onclick="toggleInfo(event, '${tileData.creatorId}')">i</button>
+                    <div class="info-tag" id="info-tag-${tileData.creatorId}">
+                        <p><strong>${tileData.name || 'Unknown'}</strong> (ID: ${tileData.creatorId.slice(0, 8)}...)</p>
+                        <p>Last Moved: ${tileData.lastMoveTime ? new Date(tileData.lastMoveTime).toLocaleTimeString() : 'N/A'}</p>
+                    </div>
+                `;
+                
+                // Add click listener for zooming (long press / tap detection handled in drag end)
+                tileElement.addEventListener('click', (e) => {
+                    // Prevent propagation if the info button was clicked
+                    if (e.target.classList.contains('info-toggle-button') || e.target.closest('.info-toggle-button')) {
                         return;
                     }
-                }
-
-                app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                if (userStatusText) userStatusText.textContent = "Status: Authenticating user...";
-                
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        authReady = true;
-                        startDataListener(); 
-                        if (userStatusText) userStatusText.innerHTML = `Signed In. ID: <span class="font-bold text-blue-600">${userId}</span>`;
-                        if(createButton.checkInputStatus) createButton.checkInputStatus();
-                    } else {
-                        userId = null; 
-                        authReady = true; 
-                        console.warn("User signed out or auth failed.");
-                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Authentication Failed. Check Console.</span>`;
-                        if(createButton.checkInputStatus) createButton.checkInputStatus();
-                    }
+                    window.zoomTile(tileData);
                 });
                 
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth); 
-                }
+                canvasContainer.appendChild(tileElement);
+                
+            }
 
-            } catch (error) {
-                userId = null;
-                authReady = true;
-                console.error("FATAL: Error during Firebase initialization:", error);
-                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Initialization Failed. Check Console.</span>`;
+            // Update image and position based on data
+            tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
+            tileElement.style.left = tileData.left || '0px';
+            tileElement.style.top = tileData.top || '0px';
+            
+            // Enable/disable drag based on limits
+            const isUserTile = tileData.creatorId === userId;
+            const now = Date.now();
+            const lastMove = tileData.lastMoveTime || 0;
+            const sessionsLeft = tileData.dragSessionsLeft || 0;
+            const isUnderCooldown = now < lastMove + COOLDOWN_DURATION_MS;
+            
+            if (isUserTile) {
+                if (isUnderCooldown) {
+                    // Under cooldown
+                    const remainingTime = Math.ceil((lastMove + COOLDOWN_DURATION_MS - now) / 1000);
+                    tileElement.style.cursor = 'not-allowed';
+                    tileElement.title = `Drag Cooldown: ${remainingTime} seconds remaining.`;
+                    tileElement.removeEventListener('mousedown', startDrag);
+                    tileElement.removeEventListener('touchstart', startDrag);
+                } else if (sessionsLeft > 0) {
+                    // Ready to drag
+                    tileElement.style.cursor = 'grab';
+                    tileElement.title = `Drag sessions left: ${sessionsLeft}`;
+                    tileElement.addEventListener('mousedown', startDrag);
+                    tileElement.addEventListener('touchstart', startDrag);
+                } else {
+                    // Sessions exhausted
+                    tileElement.style.cursor = 'not-allowed';
+                    tileElement.title = "Drag sessions exhausted. Please wait 1 minute.";
+                    tileElement.removeEventListener('mousedown', startDrag);
+                    tileElement.removeEventListener('touchstart', startDrag);
+                }
+            } else {
+                // Not the user's tile, always passive display
+                tileElement.style.cursor = 'pointer';
+                tileElement.title = `${tileData.name}'s Tile (View Only)`;
+                tileElement.removeEventListener('mousedown', startDrag);
+                tileElement.removeEventListener('touchstart', startDrag);
+            }
+
+
+            // Update info tag visibility
+            const infoTag = document.getElementById(`info-tag-${tileData.creatorId}`);
+            if (infoTag) {
+                const lastMoveDate = new Date(tileData.lastMoveTime || Date.now());
+                infoTag.querySelector('p:nth-child(2)').innerHTML = `Last Moved: ${lastMoveDate.toLocaleTimeString()}`;
+            }
+
+            return tileElement;
+        }
+
+        // Global function to toggle info tag visibility
+        window.toggleInfo = function(event, creatorId) {
+            event.stopPropagation(); // Prevent click from triggering zoom
+            const infoTag = document.getElementById(`info-tag-${creatorId}`);
+            if (infoTag) {
+                infoTag.classList.toggle('visible');
             }
         }
         
-        // --- Drag Handlers ---
-        
-        function handleDragStart(e) {
-            if (!userId) {
-                 console.warn("Drag blocked: Cannot save state without active user ID.");
-                 return;
-            }
+        window.renderAllTiles = function() {
+            // Re-render all tiles
+            allTiles.forEach((data) => createTileElement(data));
+        }
 
-            const tileElement = e.currentTarget;
-            const tileId = tileElement.dataset.tileId;
-            const tileData = allTiles.get(tileId);
+        // --- Dragging Logic ---
 
-            if (tileData.creatorId !== userId || (tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now())) {
-                return;
+        function startDrag(e) {
+            // Prevent default touch scrolling
+            if (e.type === 'touchstart') {
+                e.preventDefault(); 
             }
             
-            // Block multi-touch gestures
-            if (e.touches && e.touches.length > 1) {
+            // Do not start drag if the info button was clicked
+            if (e.target.classList.contains('info-toggle-button')) {
                 return;
             }
 
-            e.preventDefault(); 
+            const target = e.currentTarget;
+            activeTileElement = target;
+            activeTileId = target.dataset.creatorId;
             isDragging = true;
-            activeTileElement = tileElement; 
-            activeTileId = tileId;
             
             activeTileElement.classList.add('active-drag-state');
-
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
 
             const rect = activeTileElement.getBoundingClientRect();
             offsetX = clientX - rect.left;
             offsetY = clientY - rect.top;
+
+            // Attach global listeners for move and end
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('mouseup', endDrag);
+            document.addEventListener('touchmove', drag, { passive: false });
+            document.addEventListener('touchend', endDrag);
         }
 
-        function handleDragMove(e) {
-            if (!isDragging || !activeTileElement) return;
-            // Prevent default touch scrolling/gestures
-            e.preventDefault();
+        function drag(e) {
+            if (!isDragging) return;
 
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            
-            // We need to calculate the new position relative to the viewport wrapper
-            const wrapperRect = document.getElementById('mobile-viewport-wrapper').getBoundingClientRect();
-
-            let newLeft = clientX - wrapperRect.left - offsetX;
-            let newTop = clientY - wrapperRect.top - offsetY;
-
-            const viewportW = wrapperRect.width;
-            const viewportH = wrapperRect.height;
-            const elementW = activeTileElement.offsetWidth;
-            const elementH = activeTileElement.offsetHeight;
-            
-            // Boundary check: ensures tiles never leave the viewport, respecting the 12px pin offset
-            const PIN_OFFSET = 12;
-            newLeft = Math.max(PIN_OFFSET, Math.min(newLeft, viewportW - elementW - PIN_OFFSET));
-            newTop = Math.max(PIN_OFFSET, Math.min(newTop, viewportH - elementH - PIN_OFFSET));
-            
-            // Collision check
-            if (checkCollision(activeTileId, newLeft, newTop)) {
-                return; 
+            // Prevent default touch scrolling/actions
+            if (e.type === 'touchmove') {
+                e.preventDefault(); 
             }
+            
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
+            
+            // Get the container's position relative to the viewport
+            const containerRect = canvasContainer.getBoundingClientRect();
+
+            // Calculate new position relative to the container
+            let newLeft = clientX - containerRect.left - offsetX;
+            let newTop = clientY - containerRect.top - offsetY;
+
+            const tileWidth = TILE_WIDTH;
+            const tileHeight = TILE_HEIGHT;
+            const PIN_OFFSET = 12; // Padding for the pushpins
+
+            // Boundary clamping to the mobile-viewport-wrapper dimensions
+            const maxLeft = containerRect.width - tileWidth - PIN_OFFSET;
+            const maxTop = containerRect.height - tileHeight - PIN_OFFSET;
+            
+            // Apply padding limits
+            newLeft = Math.max(PIN_OFFSET, Math.min(newLeft, maxLeft));
+            newTop = Math.max(PIN_OFFSET, Math.min(newTop, maxTop));
+            
+            // Check for collision (optional: smooth drag on desktop)
+            // Note: Collision is visually ignored during drag for smoother UX, only checked on drop.
 
             activeTileElement.style.left = `${newLeft}px`;
             activeTileElement.style.top = `${newTop}px`;
         }
 
-        function handleDragEnd() {
-            if (!isDragging || !activeTileId) return;
-            
-            const tileData = allTiles.get(activeTileId);
-            
-            if (activeTileElement) activeTileElement.classList.remove('active-drag-state');
-            
-            if (userId) {
-                if (tileData.movesMade < MAX_DRAG_SESSIONS || tileData.moveRestrictionEndTime <= Date.now()) {
-                    
-                    const newMovesMade = (tileData.movesMade < MAX_DRAG_SESSIONS) ? tileData.movesMade + 1 : MAX_DRAG_SESSIONS;
-                    let newRestrictionEndTime = tileData.moveRestrictionEndTime;
-                    
-                    if (newMovesMade >= MAX_DRAG_SESSIONS) {
-                        newRestrictionEndTime = Date.now() + COOLDOWN_DURATION_MS; 
-                    }
+        async function endDrag(e) {
+            if (!isDragging) return;
 
-                    saveTile({
-                        creatorId: activeTileId, 
-                        movesMade: newMovesMade,
-                        moveRestrictionEndTime: newRestrictionEndTime,
-                        left: activeTileElement.style.left,
-                        top: activeTileElement.style.top,
-                    });
-                }
-            } else {
-                 console.error("Drag end failed: Cannot save position. User unauthenticated.");
-            }
-            
+            // Set last click time to block immediate zoom after drag
+            lastClickTime = Date.now();
             isDragging = false;
-            activeTileElement = null; 
-            activeTileId = null;
-            lastClickTime = Date.now(); // Register the end of the interaction for zoom prevention
-        }
+            
+            // Cleanup listeners
+            document.removeEventListener('mousemove', drag);
+            document.removeEventListener('mouseup', endDrag);
+            document.removeEventListener('touchmove', drag);
+            document.removeEventListener('touchend', endDrag);
 
-        // Attach global drag listeners
-        document.addEventListener('mousemove', handleDragMove);
-        document.addEventListener('mouseup', handleDragEnd);
-        // Use passive: false for touchmove to ensure preventDefault works
-        document.addEventListener('touchmove', handleDragMove, { passive: false }); 
-        document.addEventListener('touchend', handleDragEnd);
-        document.addEventListener('touchcancel', handleDragEnd);
-
-
-        // --- Tile Rendering (with Click Exclusion Fix) ---
-        
-        window.renderSingleTile = function(tileId, tileData) {
-            const domId = `tile-${tileId}`;
-            let tileElement = document.getElementById(domId);
-            let cooldownIntervalId = parseInt(tileElement?.dataset?.cooldownInterval || '0');
-
-            if (!tileElement) {
-                tileElement = document.createElement('div');
-                tileElement.id = domId;
-                tileElement.dataset.tileId = tileId;
-                tileElement.classList.add('draggable-tile'); 
-                canvasContainer.appendChild(tileElement);
-            }
-            
-            // Remove old listeners to prevent double firing, especially important for the zoom logic
-            tileElement.onclick = null;
-            tileElement.ontouchend = null;
-            
-            const isMyTile = tileId === userId;
-            let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
-            const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
-            
-            if (isCooldownExpired && isMyTile && userId) {
-                saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
-                movesLeft = MAX_DRAG_SESSIONS;
-            }
-            
-            const isRestricted = isMyTile && tileData.movesMade >= MAX_DRAG_SESSIONS && tileData.moveRestrictionEndTime > Date.now();
-            
-            // Use the universal small size class
-            tileElement.className = `${TILE_BASE_CLASSES} ${TILE_SIZE_CLASSES}`; 
-
-            if (tileData.base64Image) {
-                tileElement.style.backgroundImage = `url('${tileData.base64Image}')`;
-                tileElement.style.backgroundColor = '#d1d5db'; 
-            } else {
-                console.warn(`Rendering tile ${tileId}. Missing or undefined base64Image data.`);
-                tileElement.style.backgroundImage = 'none';
-                tileElement.style.backgroundColor = '#4B5563'; 
-            }
-
-            const textColor = 'text-white'; 
-            
-            let movesDisplayText = '';
-            if (isMyTile) {
-                 movesDisplayText = isRestricted ? 'COOLDOWN: initializing...' : `Moves Left: ${movesLeft}/${MAX_DRAG_SESSIONS}`;
-            } else {
-                 movesDisplayText = 'Shared Piece (Move limit does not apply to you)';
-            }
-            
-            const infoTagContent = `
-                <p class="font-bold mb-1 truncate text-lg">Name: ${tileData.name}</p>
-                <p class="mb-1">Owner: ${isMyTile ? 'You' : tileData.name}</p>
-                <p class="font-mono text-xs">${movesDisplayText}</p> 
-                <p class="text-[8px] opacity-70 break-all mt-1">ID: ${tileId}</p>
-            `;
-            
-            // Updated innerHTML to include the pushpins
-            tileElement.innerHTML = `
-                <!-- Pushpins for the four corners. These elements are EXCLUDED from zoom. -->
-                <div class="pushpin top-left"></div>
-                <div class="pushpin top-right"></div>
-                <div class="pushpin bottom-left"></div>
-                <div class="pushpin bottom-right"></div>
-            
-                <div class="h-full w-full flex flex-col justify-end items-end p-2 select-none pointer-events-none">
-                    <p class="text-xs italic font-normal ${textColor} opacity-80 select-none bg-black bg-opacity-40 px-2 py-1">
-                        ${isMyTile ? 'Your Tile' : `Shared by ${tileData.name}`}
-                    </p>
-                </div>
-                <!-- Hidden Info Tag (EXCLUDED from zoom) -->
-                <div id="info-tag-${tileId}" class="info-tag">
-                    ${infoTagContent}
-                </div>
-                <!-- Toggle Button (EXCLUDED from zoom) -->
-                <button id="info-toggle-${tileId}" class="info-toggle-button">
-                    +
-                </button>
-            `;
-            
-            // --- NEW: Zoom Exclusion Logic ---
-            const excludedSelectors = [
-                `#info-toggle-${tileId}`, // The '+' or 'x' button
-                `#info-tag-${tileId}`,    // The full info panel (if visible)
-                `.pushpin`                // Any of the pushpins
-            ];
-            
-            /**
-             * Checks if the event target is inside an element that should block the zoom.
-             * @param {Event} e 
-             * @returns {boolean} True if the click should be blocked.
-             */
-            const isExcluded = (e) => {
-                // If the click is on the tile element itself, and not a sub-element, it's valid for zoom
-                if (e.target === tileElement) return false;
+            if (activeTileElement) {
+                activeTileElement.classList.remove('active-drag-state');
                 
-                // Check if the target is inside any of the excluded elements
-                return e.target.closest(excludedSelectors.join(',')) !== null;
-            };
+                const newLeftPx = parseFloat(activeTileElement.style.left);
+                const newTopPx = parseFloat(activeTileElement.style.top);
 
-            // Attach toggle button listener
-            const toggleButton = tileElement.querySelector(`#info-toggle-${tileId}`);
-            const infoTag = tileElement.querySelector(`#info-tag-${tileId}`);
-            
-            if (toggleButton && infoTag) {
-                const toggleInfo = () => {
-                    infoTag.classList.toggle('visible');
-                    toggleButton.textContent = infoTag.classList.contains('visible') ? 'x' : '+';
-                };
-                
-                const stopPropagation = (e) => {
-                    e.stopPropagation();
-                }
-
-                toggleButton.addEventListener('mousedown', stopPropagation);
-                toggleButton.addEventListener('touchstart', stopPropagation, { passive: false });
-                
-                toggleButton.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    toggleInfo();
-                });
-                toggleButton.addEventListener('touchend', (e) => {
-                    e.preventDefault(); 
-                    e.stopPropagation(); 
-                    toggleInfo();
-                });
-            }
-
-            // Dragging and Click/Zoom logic
-            if (isMyTile && !isRestricted && userId) {
-                tileElement.onmousedown = handleDragStart;
-                tileElement.ontouchstart = handleDragStart;
-                tileElement.style.cursor = 'grab';
-                tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
-                
-                // Add zoom listener: Check for exclusion before zooming on click
-                tileElement.onclick = (e) => {
-                    if (isExcluded(e)) return;
-                    e.stopPropagation();
-                    window.zoomTile(tileData);
-                };
-                
-                // Add zoom listener: Check for exclusion before zooming on touchend
-                tileElement.ontouchend = (e) => {
-                    if (isExcluded(e)) return;
-                    e.stopPropagation();
-                    // Delay check to ensure dragEnd has already run
-                    setTimeout(() => {
-                        // isDragging is set to false in handleDragEnd after a drag
-                        if (!isDragging) { 
-                            window.zoomTile(tileData);
-                        }
-                    }, 50); 
-                };
-
-            } else {
-                // Not my tile, or restricted: only allow zoom (non-draggable state)
-                tileElement.onmousedown = null;
-                tileElement.ontouchstart = null;
-                
-                // Always allow zoom for non-owner/restricted tiles, but check for exclusion
-                tileElement.onclick = (e) => {
-                    if (isExcluded(e)) return;
-                    e.stopPropagation();
-                    window.zoomTile(tileData);
-                };
-                
-                tileElement.ontouchend = (e) => {
-                    if (isExcluded(e)) return;
-                    e.stopPropagation();
-                    window.zoomTile(tileData);
-                };
-
-                if (isMyTile && isRestricted) {
-                    tileElement.classList.add('opacity-50', 'cursor-not-allowed', 'shadow-inner');
-                    tileElement.style.cursor = 'default';
-                } else {
-                    tileElement.classList.remove('opacity-50', 'shadow-inner', 'cursor-not-allowed');
-                    tileElement.classList.add('opacity-90');
-                }
-                tileElement.style.cursor = 'zoom-in';
-            }
-            
-            // Cooldown Interval Logic (only runs if userId is available)
-            if (userId && isMyTile && isRestricted) {
-                if (cooldownIntervalId) clearInterval(cooldownIntervalId);
-                
-                const updateRestrictionDisplay = () => {
-                    const now = Date.now();
-                    const timeRemaining = tileData.moveRestrictionEndTime - now;
-                    const movesDisplayElement = tileElement.querySelector('.info-tag p:nth-child(3)'); 
-
-                    if (timeRemaining <= 0) {
-                        clearInterval(parseInt(tileElement.dataset.cooldownInterval));
-                        saveTile({ movesMade: 0, moveRestrictionEndTime: 0 }); 
-                        return; 
+                // Check collision before committing to the database
+                if (checkCollision(activeTileId, newLeftPx, newTopPx)) {
+                    // Collision detected, revert position to last known good state
+                    console.warn("Collision detected. Reverting tile position.");
+                    const currentTileData = allTiles.get(activeTileId);
+                    if (currentTileData) {
+                         activeTileElement.style.left = currentTileData.left || '0px';
+                         activeTileElement.style.top = currentTileData.top || '0px';
                     }
-
-                    const secondsTotal = Math.ceil(timeRemaining / 1000);
-                    const minutes = Math.floor(secondsTotal / 60);
-                    const seconds = secondsTotal % 60;
-                    const displayTime = `${minutes}:${String(seconds).padStart(2, '0')}`;
-                    
-                    if(movesDisplayElement) movesDisplayElement.textContent = `COOLDOWN: ${displayTime}`;
-                };
-                
-                updateRestrictionDisplay(); 
-                const newIntervalId = setInterval(updateRestrictionDisplay, 1000);
-                tileElement.dataset.cooldownInterval = newIntervalId;
-            } else if (cooldownIntervalId) {
-                 clearInterval(cooldownIntervalId);
-                 tileElement.dataset.cooldownInterval = '0';
-            }
-            
-            // Set position 
-            const isCurrentlyDragged = activeTileId === tileId && isDragging;
-            
-            if(!isCurrentlyDragged && tileData.left && tileData.top) {
-                tileElement.style.left = tileData.left; 
-                tileElement.style.top = tileData.top; 
-            }
-        }
-
-        window.renderAllTiles = function() {
-            const existingTileIds = new Set();
-            canvasContainer.querySelectorAll('.draggable-tile').forEach(el => {
-                existingTileIds.add(el.dataset.tileId);
-            });
-            
-            for (const [id, data] of allTiles.entries()) {
-                window.renderSingleTile(id, data);
-                existingTileIds.delete(id); 
-            }
-            
-            existingTileIds.forEach(idToRemove => {
-                const element = document.getElementById(`tile-${idToRemove}`);
-                if (element) {
-                    const intervalId = parseInt(element.dataset.cooldownInterval || '0');
-                    if(intervalId) clearInterval(intervalId);
-                    element.remove();
-                }
-            });
-        }
-
-
-        // --- Event Binding for Modals ---
-        
-        function setupPromptHandlers() {
-            const createNameInput = document.getElementById('name-input');
-            const imageUploadInput = document.getElementById('image-upload'); 
-            const imagePreviewElement = document.getElementById('image-preview');
-            const createButton = document.getElementById('submit-button');
-            const compressionStatus = document.getElementById('compression-status');
-            
-            const checkCreateInput = () => {
-                const nameValid = createNameInput.value.trim().length > 0;
-                const imageValid = uploadedBase64Image !== null; 
-                
-                createButton.disabled = !(nameValid && imageValid && authReady && userId);
-            };
-
-            createButton.checkInputStatus = checkCreateInput;
-
-            // Image file reader with compression
-            imageUploadInput.addEventListener('change', async (e) => {
-                const file = e.target.files[0];
-                
-                if (!file) {
-                    uploadedBase64Image = null;
-                    imagePreviewElement.style.backgroundImage = 'none';
-                    imagePreviewElement.textContent = 'Preview';
-                    compressionStatus.classList.add('hidden');
-                    checkCreateInput();
+                    activeTileElement = null;
+                    activeTileId = null;
                     return;
                 }
+
+                // Update data and save to Firestore
+                const currentTileData = allTiles.get(activeTileId);
+                if (currentTileData) {
+                    const now = Date.now();
+                    
+                    const newDragSessionsLeft = (currentTileData.dragSessionsLeft || MAX_DRAG_SESSIONS) - 1;
+
+                    const updatedData = {
+                        ...currentTileData,
+                        left: `${newLeftPx}px`,
+                        top: `${newTopPx}px`,
+                        lastMoveTime: now,
+                        dragSessionsLeft: newDragSessionsLeft,
+                        // Reset session count after cooldown period elapses
+                        ...(newDragSessionsLeft <= 0 ? { 
+                            lastMoveTime: now, 
+                            dragSessionsLeft: 0 
+                        } : {})
+                    };
+
+                    allTiles.set(activeTileId, updatedData);
+                    await saveTile(updatedData);
+                }
+
+                activeTileElement = null;
+                activeTileId = null;
+            }
+        }
+        
+        // --- Firebase Initialization and Listeners ---
+
+        async function initializeFirebase() {
+            // Apply fallbacks if configuration is missing
+            if (!firebaseConfig.projectId) {
+                firebaseConfig = {
+                    apiKey: manualApiKeyFallback,
+                    authDomain: `${manualProjectIdFallback}.firebaseapp.com`,
+                    projectId: manualProjectIdFallback,
+                    storageBucket: `${manualProjectIdFallback}.appspot.com`,
+                    messagingSenderId: "1057034177309",
+                    appId: "1:1057034177309:web:5d2b3c1b6a1e9c8f2d4e7f"
+                };
+            }
+            
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
                 
-                uploadedBase64Image = null; // Disable button while processing
-                checkCreateInput();
+                userStatusText.textContent = "Status: Authenticating...";
+
+                // Handle custom token or anonymous sign-in
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
                 
-                imagePreviewElement.textContent = 'Compressing...';
-                imagePreviewElement.classList.remove('bg-gray-100');
-                imagePreviewElement.classList.add('bg-yellow-100');
+                // Set up Auth State Listener
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        authReady = true;
+                        userStatusText.textContent = `User ID: ${userId.slice(0, 8)}... | App ID: ${appId}`;
+                        startListeningForTiles();
+                    } else {
+                        userId = null;
+                        authReady = false;
+                        userStatusText.textContent = "Status: Waiting for authentication...";
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                userStatusText.textContent = "Error: Firebase failed to initialize.";
+            }
+        }
+
+        function startListeningForTiles() {
+            if (!db || !authReady) return;
+
+            const tilesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'shared_tiles');
+            const tilesQuery = query(tilesCollectionRef);
+
+            // Real-time listener for all public tiles
+            onSnapshot(tilesQuery, (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    const tileData = change.doc.data();
+                    const creatorId = tileData.creatorId;
+
+                    if (!creatorId) return;
+
+                    if (change.type === "added" || change.type === "modified") {
+                        allTiles.set(creatorId, tileData);
+                        createTileElement(tileData);
+                        
+                        // If the user's tile exists, hide the prompt modal
+                        if (creatorId === userId) {
+                            hideModal(createPromptModal);
+                        }
+                    } else if (change.type === "removed") {
+                        allTiles.delete(creatorId);
+                        const element = document.getElementById(`tile-${creatorId}`);
+                        if (element) {
+                            element.remove();
+                        }
+                    }
+                });
+                
+                // After processing all changes, check if the current user has a tile
+                if (authReady && !allTiles.has(userId)) {
+                    createPromptModal.classList.remove('hidden');
+                } else if (authReady && allTiles.has(userId)) {
+                    hideModal(createPromptModal);
+                }
+            }, (error) => {
+                console.error("Firestore listen failed:", error);
+                userStatusText.textContent = "Error: Failed to load shared data.";
+            });
+        }
+        
+        // --- Form/Input Logic ---
+
+        document.getElementById('image-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            const nameInput = document.getElementById('name-input').value.trim();
+            const submitButton = document.getElementById('submit-button');
+            const compressionStatus = document.getElementById('compression-status');
+            const preview = document.getElementById('image-preview');
+
+            if (file) {
                 compressionStatus.classList.remove('hidden');
+                submitButton.disabled = true;
+                uploadedBase64Image = null;
+                preview.style.backgroundImage = 'none';
+                preview.textContent = "Preview";
                 
                 try {
-                    const compressedDataUrl = await resizeAndCompressImage(file);
-                    uploadedBase64Image = compressedDataUrl;
+                    uploadedBase64Image = await resizeAndCompressImage(file);
                     
-                    // Show final compressed data size for debugging/confirmation
-                    const sizeKB = Math.round(compressedDataUrl.length / 1024);
-                    compressionStatus.textContent = `Compressed: ${sizeKB} KB (Safe for Firestore)`;
-                    
-                    imagePreviewElement.style.backgroundImage = `url('${compressedDataUrl}')`;
-                    imagePreviewElement.textContent = '';
-                    
+                    // Update preview
+                    preview.style.backgroundImage = `url('${uploadedBase64Image}')`;
+                    preview.style.backgroundSize = 'contain';
+                    preview.style.backgroundColor = '#ffffff';
+                    preview.textContent = "";
+
+                    // Re-check form validity
+                    if (nameInput.length > 0) {
+                        submitButton.disabled = false;
+                    }
+
                 } catch (error) {
-                    console.error("Error processing image:", error);
-                    uploadedBase64Image = null;
-                    imagePreviewElement.style.backgroundImage = 'none';
-                    imagePreviewElement.textContent = 'Error';
-                    compressionStatus.textContent = 'Error compressing image!';
+                    console.error("Image processing error:", error);
+                    alert("Error processing image. Please try a smaller file.");
+                    submitButton.disabled = true;
+                } finally {
+                    compressionStatus.classList.add('hidden');
                 }
-                
-                imagePreviewElement.classList.add('bg-gray-100');
-                imagePreviewElement.classList.remove('bg-yellow-100');
-                checkCreateInput(); 
-            });
+            }
+        });
 
-            createNameInput.addEventListener('keyup', checkCreateInput); 
-            createNameInput.addEventListener('input', checkCreateInput); 
+        document.getElementById('name-input').addEventListener('input', (e) => {
+            const name = e.target.value.trim();
+            const submitButton = document.getElementById('submit-button');
             
-            checkCreateInput(); 
+            // Enable button only if name is present AND image is uploaded
+            if (name.length > 0 && uploadedBase64Image) {
+                submitButton.disabled = false;
+            } else {
+                submitButton.disabled = true;
+            }
+        });
 
+        document.getElementById('submit-button').addEventListener('click', async () => {
+            const name = document.getElementById('name-input').value.trim();
+            
+            if (!authReady || !userId || !name || !uploadedBase64Image) {
+                console.error("Cannot create tile: missing data or unauthenticated.");
+                return;
+            }
 
-            const createNewTile = async () => {
-                const name = createNameInput.value.trim();
-                
-                if (!name || !uploadedBase64Image || !userId) {
-                    console.error("Cannot create tile: Critical data missing (User ID, Name, or Image).");
-                    checkCreateInput();
-                    return;
-                }
-
-                console.log(`Attempting to create and save tile for user: ${userId}`);
-
-                hideModal(createPromptModal);
-                
-                const creationDate = new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric' 
-                });
-                
-                // Get safe, non-overlapping initial position
-                const { width, height } = window.getCurrentTileDimensions(); 
-                const { left: initialLeft, top: initialTop } = findSafeInitialPosition(width, height);
-                
-                const newTileData = {
-                    creatorId: userId, 
-                    name: name,
-                    base64Image: uploadedBase64Image, 
-                    left: initialLeft,
-                    top: initialTop,
-                    createdAt: creationDate,
-                    movesMade: 0, 
-                    moveRestrictionEndTime: 0,
-                };
-                
-                await saveTile(newTileData); 
+            const { width, height } = getCurrentTileDimensions();
+            const initialPos = findSafeInitialPosition(width, height);
+            
+            const newTileData = {
+                creatorId: userId,
+                name: name,
+                base64Image: uploadedBase64Image,
+                left: initialPos.left,
+                top: initialPos.top,
+                createdAt: new Date().toISOString().substring(0, 10), // YYYY-MM-DD
+                lastMoveTime: Date.now(),
+                dragSessionsLeft: MAX_DRAG_SESSIONS,
             };
 
-            // Event Listeners for the button
-            createButton.addEventListener('click', createNewTile);
-            createButton.addEventListener('touchend', (e) => { e.preventDefault(); createNewTile(); });
-            createNameInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && !createButton.disabled) createNewTile();
-            });
-        }
+            await saveTile(newTileData);
+            
+            // The onSnapshot listener will handle hiding the modal
+            // and rendering the tile when the database confirms the save.
+        });
 
+        // Initialize Firebase on window load
+        window.onload = initializeFirebase;
 
-        // --- Core Execution Flow ---
-        
-        setupPromptHandlers();
-        setupAuthAndData();
-        
     </script>
 </body>
 </html>
