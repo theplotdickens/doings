@@ -126,7 +126,7 @@
                 <p class="text-xl font-bold text-gray-800 text-center">Create Your Image Tile</p>
                 <!-- Status text for Firebase initialization -->
                 <p class="text-xs text-center text-gray-500 break-all" id="user-status-text">
-                    Status: UI loaded. Initializing services...
+                    Status: Initializing services...
                 </p>
 
                 <input
@@ -169,10 +169,10 @@
         // ⭐ FIREBASE CONFIGURATION INJECTED ⭐
         // =========================================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* mock config if needed for local dev */ };
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
         
-        let isDatabaseAvailable = true; // Assume true until we check config
+        let isDatabaseAvailable = true; // Assume true until checks fail
         // =========================================================================================================
 
         
@@ -232,23 +232,17 @@
             const tileId = data.creatorId || userId;
             if (!tileId) return console.error("Cannot save tile: missing ID.");
 
-            // STRICT CHECK: If DB is not initialized, we cannot save online.
-            if (!isDatabaseAvailable || !db) {
+            // STRICT CHECK: Cannot save if DB/Auth is down
+            if (!isDatabaseAvailable || !userId || !db) {
                  console.error("FATAL: Cannot save tile. Database connection is down/unauthenticated.");
-                 userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Save failed. Database unavailable.</span>`;
                  return; 
             }
 
             const tileRef = getTileDocRef(tileId);
-            if (tileRef) {
-                try {
-                    await setDoc(tileRef, data, { merge: true });
-                } catch (error) {
-                    console.error("Error saving tile data to Firestore:", error);
-                    userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Failed to save tile (Check console).</span>`;
-                }
-            } else {
-                 console.warn("Save requested, but database reference is null. DB is likely down.");
+            try {
+                await setDoc(tileRef, data, { merge: true });
+            } catch (error) {
+                console.error("Error saving tile data to Firestore:", error);
             }
         }
         
@@ -340,10 +334,6 @@
                 
             }, (error) => {
                 console.error("Error listening to shared tiles:", error);
-                // If there's an error, assume the user might not have a tile and show the modal
-                if (userId && !allTiles.has(userId) && isDatabaseAvailable) {
-                    createPromptModal.classList.remove('hidden');
-                }
             });
         }
         
@@ -352,18 +342,19 @@
          */
         async function setupAuthAndData() {
             const createButton = document.getElementById('submit-button');
+            const firebaseConfigIsEmpty = Object.keys(firebaseConfig).length === 0;
 
             // CRITICAL CHECK: Determine if config and token are present
-            if (Object.keys(firebaseConfig).length === 0 || !initialAuthToken) {
+            if (firebaseConfigIsEmpty || !initialAuthToken) {
                  isDatabaseAvailable = false;
                  userId = null;
                  
-                 console.error("CRITICAL ERROR: The required Firebase configuration or token is missing. Disabling sharing features.");
+                 console.error("CRITICAL ERROR: Firebase configuration/token missing. Persistence disabled.");
                  
-                 // Update UI to reflect failure
-                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">CRITICAL ERROR: Cannot connect to database. <br> Config/Token missing. Tile creation disabled.</span>`;
+                 // Display a single, clean error message
+                 if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Connection Disabled (Configuration Missing)</span>`;
 
-                 // Trigger validation check - button will remain disabled because userId is null
+                 // Disable button based on input status (which now includes userId == null)
                  if(createButton.checkInputStatus) createButton.checkInputStatus();
                  return; // HALT Firebase initialization
             }
@@ -374,20 +365,22 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                if (userStatusText) userStatusText.textContent = "Status: Firebase initialized. Attempting sign-in...";
+                if (userStatusText) userStatusText.textContent = "Status: Connecting...";
                 
                 // Set up Auth State Change Listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
+                        isDatabaseAvailable = true;
                         startDataListener(); 
-                        if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
+                        if (userStatusText) userStatusText.innerHTML = `Signed In. ID: <span class="font-bold text-blue-600">${userId}</span>`;
 
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     } else {
                         userId = null; 
-                        isDatabaseAvailable = false; // Mark as unavailable if user somehow signs out
+                        isDatabaseAvailable = false; 
                         console.warn("User signed out or auth failed. Disabling save functionality.");
+                        if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Authentication Failed</span>`;
                         if(createButton.checkInputStatus) createButton.checkInputStatus();
                     }
                 });
@@ -396,17 +389,14 @@
                 try {
                     if (initialAuthToken) {
                         await signInWithCustomToken(auth, initialAuthToken);
-                        console.log("Custom Sign-in attempt successful.");
                     } else {
-                        // Fallback to anonymous sign-in only if custom token is missing, but here we require it.
                         await signInAnonymously(auth); 
-                        console.warn("Attempted anonymous sign-in (Custom Token missing or invalid).");
                     }
                 } catch (signInError) {
                     console.error("CRITICAL: Firebase Sign-in failed.", signInError);
-                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">ERROR: Sign-in Failed. Check console for details.</span>`;
                     isDatabaseAvailable = false;
                     userId = null;
+                    if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Sign-in Failed</span>`;
                 }
 
             } catch (error) {
@@ -414,7 +404,7 @@
                 isDatabaseAvailable = false;
                 userId = null;
                 console.error("FATAL: Error during Firebase initialization:", error);
-                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">FATAL ERROR: Initialization failed.</span>`;
+                if (userStatusText) userStatusText.innerHTML = `<span class="text-red-600 font-bold">Error: Initialization Failed</span>`;
             }
         }
         
@@ -547,6 +537,7 @@
             let movesLeft = MAX_DRAG_SESSIONS - tileData.movesMade;
             const isCooldownExpired = tileData.moveRestrictionEndTime > 0 && Date.now() >= tileData.moveRestrictionEndTime;
             
+            // Auto-reset moves if cooldown expired AND we have a live DB connection
             if (isCooldownExpired && isMyTile && isDatabaseAvailable) {
                 saveTile({ movesMade: 0, moveRestrictionEndTime: 0 });
                 movesLeft = MAX_DRAG_SESSIONS;
@@ -582,7 +573,7 @@
             const infoTagContent = `
                 <p class="font-bold mb-1 truncate">Name: ${tileData.name}</p>
                 <p>Moves: ${tileData.movesMade}/${MAX_DRAG_SESSIONS}</p>
-                <p class="text-[8px] opacity-70 break-all">ID: ${tileId.substring(0, 8)}...</p>
+                <p class="text-[8px] opacity-70 break-all">ID: ${tileId}</p>
             `;
 
             tileElement.innerHTML = `
@@ -722,17 +713,12 @@
             const checkCreateInput = () => {
                 const nameValid = createNameInput.value.trim().length > 0;
                 const imageValid = uploadedBase64Image !== null; 
-                const authValid = userId !== null; // Requires successful Firebase Auth
                 
-                // Button is enabled ONLY if all three conditions are met
-                createButton.disabled = !(nameValid && imageValid && authValid);
+                // The button is only active if the user is authenticated (userId != null) AND DB is confirmed available, 
+                // AND local inputs are valid.
+                const canSave = userId !== null && isDatabaseAvailable && nameValid && imageValid;
                 
-                // Show status for authenticated user or error status
-                if (!isDatabaseAvailable && !authValid) {
-                     // Status text already set during setupAuthAndData error
-                } else if (authValid) {
-                    if (userStatusText) userStatusText.innerHTML = `Signed In. <br> Your ID: <span class="font-bold text-blue-600">${userId}</span>`;
-                }
+                createButton.disabled = !canSave;
             };
 
             // Expose the check function on the button for use in setupAuthAndData
@@ -779,15 +765,14 @@
             const createNewTile = async () => {
                 const name = createNameInput.value.trim();
                 
-                // Check if all prerequisites are still valid right before creation
+                // Final, strict check before proceeding
                 if (!name || !uploadedBase64Image || !userId || !isDatabaseAvailable) {
                     console.error("Cannot create tile: Prerequisites (Name, Image, Auth, DB) are not met.");
-                    // Force a status update just in case
                     checkCreateInput();
                     return;
                 }
 
-                console.log(`Successfully attempting to create and save tile for user: ${userId}`);
+                console.log(`Attempting to create and save tile for user: ${userId}`);
 
                 // Proceed with creation
                 hideModal(createPromptModal);
@@ -813,7 +798,7 @@
                     moveRestrictionEndTime: 0,
                 };
                 
-                await saveTile(newTileData); // Use await to catch potential sync/async errors
+                await saveTile(newTileData); 
             };
 
             // Event Listeners for the button
